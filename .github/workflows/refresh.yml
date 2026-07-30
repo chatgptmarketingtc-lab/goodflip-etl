@@ -1,0 +1,53 @@
+name: GoodFlip feed refresh
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+    - cron: '17 * * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'full or light'
+        required: false
+        default: 'light'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Refresh feed
+        env:
+          META_ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN }}
+          LSQ_HOST: ${{ secrets.LSQ_HOST }}
+          LSQ_ACCESS_KEY: ${{ secrets.LSQ_ACCESS_KEY }}
+          LSQ_SECRET_KEY: ${{ secrets.LSQ_SECRET_KEY }}
+          SHOPIFY_STORE_DOMAIN: ${{ secrets.SHOPIFY_STORE_DOMAIN }}
+          SHOPIFY_ADMIN_TOKEN: ${{ secrets.SHOPIFY_ADMIN_TOKEN }}
+          GMAIL_IMAP_USER: ${{ secrets.GMAIL_IMAP_USER }}
+          GMAIL_IMAP_APP_PASSWORD: ${{ secrets.GMAIL_IMAP_APP_PASSWORD }}
+          PROGRAM_REVENUE_XLSX_URL: ${{ secrets.PROGRAM_REVENUE_XLSX_URL }}
+          BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+          REFRESH_MODE: ${{ github.event.inputs.mode || (github.event.schedule == '17 * * * *' && 'full' || 'light') }}
+        run: |
+          npm install --no-audit --no-fund
+          node refresh-data.mjs
+      - name: Heartbeat
+        if: github.event.schedule == '17 * * * *'
+        run: |
+          date -u +%Y-%m-%dT%H:%MZ > last-run.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add last-run.txt
+          git commit -m "heartbeat" || echo "no change"
+          git push || echo "push failed (non-fatal)"
