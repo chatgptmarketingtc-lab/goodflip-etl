@@ -444,8 +444,17 @@ try {
 // GoKwik) from the previous data.json. A light run finishes in ~1 min, so an external cron can
 // rebuild the feed every few minutes without paying Meta's ~4-min paced pull each time. The
 // default (full) run refreshes everything, and should stay on an hourly cadence for Meta.
-const LIGHT = (process.env.REFRESH_MODE||'').toLowerCase()==='light';
+const modeEnv = (process.env.REFRESH_MODE||'').toLowerCase();
+// Auto-escalate: a light run promotes itself to a FULL (Meta) pull if the last full run was more
+// than ~55 min ago. This keeps Meta fresh on the SAME reliable external trigger, with zero
+// dependence on GitHub's unreliable internal scheduler. Explicit REFRESH_MODE=full still forces full.
+const _lastFull = (prev.meta && prev.meta.lastFullRun) ? Date.parse(prev.meta.lastFullRun) : 0;
+const _metaStale = !_lastFull || (Date.now() - _lastFull) > 55*60*1000;
+const LIGHT = (modeEnv === 'light') && !_metaStale;
 const out={ dailyCreatives:prev.dailyCreatives||{}, creativeImages:{}, mqlDaily:prev.mqlDaily||{}, lsqAllDaily:prev.lsqAllDaily||{}, lsqStageDaily:prev.lsqStageDaily||{}, lsqSourceDaily:prev.lsqSourceDaily||{}, glpYesDaily:prev.glpYesDaily||{}, mqlCityDaily:prev.mqlCityDaily||{}, mqlAgeDaily:prev.mqlAgeDaily||{}, shopifyDaily:prev.shopifyDaily||{}, gokwikFunnelDaily:prev.gokwikFunnelDaily||{}, gokwikAbandonedDaily:prev.gokwikAbandonedDaily||{}, programRevenueDaily:prev.programRevenueDaily||{}, programSalesDaily:prev.programSalesDaily||{}, meta: Object.assign({}, prev.meta||{}, { sources: Object.assign({}, (prev.meta&&prev.meta.sources)||{}), version:'gha-v1', lastRun:new Date().toISOString(), mode: LIGHT?'light':'full' }) };
+// Mark when a full (Meta) pull is attempted so auto-escalation waits ~1h before the next one
+// (prevents hammering Meta's rate limit if a pull fails).
+if(!LIGHT) out.meta.lastFullRun = new Date().toISOString();
 
 const token=process.env.META_ACCESS_TOKEN;
 async function run(name, fn, apply){ try{ const r=await fn(); apply(r); out.meta.sources[name]='ok'; console.log('['+name+'] ok'); }catch(e){ out.meta.sources[name]='error: '+e.message; console.error('['+name+'] FAILED:', e.message); } }
