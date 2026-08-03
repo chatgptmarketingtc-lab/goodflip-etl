@@ -141,7 +141,17 @@ async function getPerformance(token) {
 
 // ---------- LeadSquared MQL ----------
 const QUALIFYING_CITIES = ['mumbai','bombay','navi mumbai','thane','thane west','vasai','kalyan','dombivli','dahisar','new panvel','panvel','delhi','new delhi','delhi-ncr','west delhi','najafgarh','dwarka','rohini','gurugram','gurgaon','noida','greater noida','noida extension','ghaziabad','gaziabad','indirapuram','faridabad','bengaluru','bangalore','banglore','bangaluru','bengalore','hyderabad','secunderabad','chennai','madras','pune','pimpri-chinchwad','pcmc','kolkata','calcutta','howrah','madhyamgram','barrackpore','ahmedabad','gandhinagar','lucknow','chandigarh','mohali','panchkula','jaipur','indore','kochi','cochin','ernakulam','nagpur','bhubaneswar','meerut'];
-const LSQ_FIELDS = ['ProspectID','CreatedOn','mx_utm_disease','mx_Age_Group','mx_City','mx_Do_you_remember_your_HbA1c_levels','mx_Do_you_know_your_recent_blood_sugar_level','mx_Are_you_open_to_investing_in_this_paid_program_of','mx_Waist_Circumference','mx_Is_your_weight_or_BMI_higher_than_recommended','ProspectStage','Source','mx_are_you_open_to_a_medically_supervised_GLP_program','mx_user_source'];
+const LSQ_FIELDS = ['ProspectID','CreatedOn','mx_utm_disease','mx_Age_Group','mx_City','mx_Do_you_remember_your_HbA1c_levels','mx_Do_you_know_your_recent_blood_sugar_level','mx_Are_you_open_to_investing_in_this_paid_program_of','mx_Waist_Circumference','mx_Is_your_weight_or_BMI_higher_than_recommended','ProspectStage','Source','mx_are_you_open_to_a_medically_supervised_GLP_program','mx_user_source','OwnerIdName'];
+// ---------- Counsellor leaderboard helpers (shared: LSQ lead owner + sheet Health Counsellor) ----------
+// The counsellor who OWNS a lead in LeadSquared is the same person who closes the sale in the SharePoint
+// sheet, but a few names differ slightly between systems, so normalise both through one map. System /
+// team-lead / ops owners are excluded so the board shows only floor counsellors.
+const COUNSELLOR_EXCLUDE = new Set(['','system','shantha s','prakash chandra']);
+const COUNSELLOR_ALIAS = { 'md shaqib ahmad':'Md Shaqib', 'rahul kumar singhal':'Rahul Singhal', 'nisha v':'Nisha v' };
+function canonCounsellor(raw){ const t=(raw==null?'':raw.toString()).replace(/\s+/g,' ').trim(); const lc=t.toLowerCase(); if(COUNSELLOR_EXCLUDE.has(lc))return null; return COUNSELLOR_ALIAS[lc]||t; }
+// Care program (workspace 'Program' rule) = Care Plan + Sema Care Plan + Smart CGM; everything else
+// (Standalone CGM/BCA/Transmitter, Diagnostics, ...) is non-care. GLP Drug is already excluded upstream.
+function isCareSale(saleType){ const x=(saleType||'').toString().toLowerCase(); return x.includes('care plan')||x.includes('sema')||(x.includes('smart')&&x.includes('cgm')); }
 const LSQ_SOURCE_MAP = {'fb lead ads':'FB Lead Ads','whatsapp marketing':'WhatsApp Marketing','webpage lead':'Webpage Lead','tata 1mg':'TATA 1MG','affiliate':'Affiliate'};
 function lsqTherapy(d){ d=(d||'').toLowerCase(); if(d.includes('pre-diabetes')||d.includes('pre_diabetes')||d.includes('prediabetes'))return 'Pre-Diabetes'; if(d.includes('diabetes'))return 'Diabetes'; if(d.includes('obesity')||d.includes('weight'))return 'Obesity'; if(d.includes('glp'))return 'GLP-1'; if(d.includes('pcos'))return 'PCOS'; return null; }
 function normalizeStage(s){ s=(s||'').toString().replace(/\s+/g,' ').trim(); if(!s)return ''; const lc=s.toLowerCase(); if(lc.indexOf('reinquir')>=0||lc.indexOf('re-enquir')>=0)return 'Re-enquired'; return s; }
@@ -176,10 +186,10 @@ async function getMQL(){
     for(const raw of leads){ const rec=flatten(raw); if(rec.ProspectID&&!seen[rec.ProspectID])seen[rec.ProspectID]=rec; }
     if(leads.length<1000)break;
   }
-  const mqlDaily={}, lsqAllDaily={}, lsqStageDaily={}, lsqSourceDaily={}, glpYesDaily={}, mqlCityDaily={}, mqlAgeDaily={};
+  const mqlDaily={}, lsqAllDaily={}, lsqStageDaily={}, lsqSourceDaily={}, glpYesDaily={}, mqlCityDaily={}, mqlAgeDaily={}, counsellorLeadsDaily={};
   for(const rec of Object.values(seen)){
     const co=(rec.CreatedOn||'').slice(0,10); if(!co||co<since||co>until)continue;
-    lsqAllDaily[co]=(lsqAllDaily[co]||0)+1; const srcL=(rec.Source||'').trim().toLowerCase(); const srcKey=LSQ_SOURCE_MAP[srcL]; if(srcKey){ (lsqSourceDaily[co]=lsqSourceDaily[co]||{}); lsqSourceDaily[co][srcKey]=(lsqSourceDaily[co][srcKey]||0)+1; } if(!srcL){const us=(rec.mx_user_source||'').toLowerCase();if(us.includes('glp')){(lsqSourceDaily[co]=lsqSourceDaily[co]||{});lsqSourceDaily[co]['GLP (no source)']=(lsqSourceDaily[co]['GLP (no source)']||0)+1;}}
+    lsqAllDaily[co]=(lsqAllDaily[co]||0)+1; { const _cn=canonCounsellor(rec.OwnerIdName); if(_cn){ (counsellorLeadsDaily[co]=counsellorLeadsDaily[co]||{}); counsellorLeadsDaily[co][_cn]=(counsellorLeadsDaily[co][_cn]||0)+1; } } const srcL=(rec.Source||'').trim().toLowerCase(); const srcKey=LSQ_SOURCE_MAP[srcL]; if(srcKey){ (lsqSourceDaily[co]=lsqSourceDaily[co]||{}); lsqSourceDaily[co][srcKey]=(lsqSourceDaily[co][srcKey]||0)+1; } if(!srcL){const us=(rec.mx_user_source||'').toLowerCase();if(us.includes('glp')){(lsqSourceDaily[co]=lsqSourceDaily[co]||{});lsqSourceDaily[co]['GLP (no source)']=(lsqSourceDaily[co]['GLP (no source)']||0)+1;}}
       if(srcL==='fb lead ads'){ const glpA=(rec.mx_are_you_open_to_a_medically_supervised_GLP_program||'').toLowerCase(); const glpTh=lsqTherapy(rec.mx_utm_disease); if(glpA.includes('yes')&&(glpTh==='Diabetes'||glpTh==='Obesity')){ glpYesDaily[co]=(glpYesDaily[co]||0)+1; } }
     const sc=scoreLead(rec); if(!sc)continue;
     if(srcL==='fb lead ads'){ (mqlDaily[co]=mqlDaily[co]||{}); (mqlDaily[co][sc.therapy]=mqlDaily[co][sc.therapy]||{t:0,pa:0,ro:0,rv:0,fl:0});
@@ -187,7 +197,7 @@ async function getMQL(){
     const stg=normalizeStage(rec.ProspectStage);
     if(stg){ (lsqStageDaily[co]=lsqStageDaily[co]||{}); (lsqStageDaily[co][sc.therapy]=lsqStageDaily[co][sc.therapy]||{}); lsqStageDaily[co][sc.therapy][stg]=(lsqStageDaily[co][sc.therapy][stg]||0)+1; }
   }
-  return { mqlDaily, lsqAllDaily, lsqStageDaily, lsqSourceDaily, glpYesDaily, mqlCityDaily, mqlAgeDaily, pulled:Object.keys(seen).length, window:{since,until} };
+  return { mqlDaily, lsqAllDaily, lsqStageDaily, lsqSourceDaily, glpYesDaily, mqlCityDaily, mqlAgeDaily, counsellorLeadsDaily, pulled:Object.keys(seen).length, window:{since,until} };
 }
 
 // ---------- Shopify ----------
@@ -335,6 +345,7 @@ async function getProgramRevenue() {
 
   const daily = {};   // programRevenueDaily: { date: { Program: netRevenue } } (unchanged)
   const sales = {};   // programSalesDaily: rich per-program aggregates (counts + amounts only, no PII)
+  const csales = {};  // counsellorSalesDaily: per-counsellor Care vs Non-care sales/revenue (leaderboard)
   const seen = new Set(); const unattr = {}; const tabsUsed = [];
   let rowsKept = 0, dupes = 0;
   // canonical-casing maps so "smart CGM" / "Smart CGM" etc. merge across the whole parse
@@ -417,6 +428,7 @@ async function getProgramRevenue() {
       const pk = canon(planC, row[sti]); if (pk) { const o = a.plan[pk] = a.plan[pk] || { n: 0, rev: 0 }; o.n++; o.rev = r2(o.rev + net); o.revAll = r2((o.revAll||0) + (isFinite(parseFloat(row[naoi]))?parseFloat(row[naoi]):net)); }
       const ck = canon(cityC, row[cityi]); if (ck) { const o = a.city[ck] = a.city[ck] || { n: 0, rev: 0 }; o.n++; o.rev = r2(o.rev + net); }
       const rk = canon(repC, row[hci]); if (rk) { const o = a.rep[rk] = a.rep[rk] || { n: 0, rev: 0, dListed: 0, dGross: 0 }; o.n++; o.rev = r2(o.rev + net); if (hasDisc) { o.dListed = r2(o.dListed + listedV); o.dGross = r2(o.dGross + gross); } }
+      const _cs = canonCounsellor(row[hci]); if (_cs) { const cc = (csales[iso] = csales[iso] || {})[_cs] = (csales[iso][_cs] || { cN:0, cRev:0, nN:0, nRev:0 }); if (isCareSale(row[sti])) { cc.cN += 1; cc.cRev = r2(cc.cRev + net); } else { cc.nN += 1; cc.nRev = r2(cc.nRev + net); } }
       const liso = progExcelIso(row[lci]);
       if (liso) { const days = Math.round((new Date(iso) - new Date(liso)) / 86400000); if (days >= 0 && days <= 3650) { a.cyc.sum += days; a.cyc.n += 1; const b = bucketOf(days); a.cyc.b[b] = (a.cyc.b[b] || 0) + 1; } }
     }
@@ -425,7 +437,7 @@ async function getProgramRevenue() {
   if (rowsKept === 0) throw new Error('no in-window rows parsed (sheet shape may have changed)');
   if (tabsSkipped.length) console.log('[programRevenue] SKIPPED tab(s): ' + tabsSkipped.join(' | '));
   if (tabsDegraded.length) console.log('[programRevenue] DEGRADED tab(s): ' + tabsDegraded.join(' | '));
-  return { programRevenueDaily: daily, programSalesDaily: sales, info: { rowsKept, dupes, tabsUsed, tabsSkipped, tabsDegraded, unattributed: unattr, window: { since: cut, until: TODAY } } };
+  return { programRevenueDaily: daily, programSalesDaily: sales, counsellorSalesDaily: csales, info: { rowsKept, dupes, tabsUsed, tabsSkipped, tabsDegraded, unattributed: unattr, window: { since: cut, until: TODAY } } };
 }
 
 // ---------- main ----------
@@ -451,7 +463,7 @@ const modeEnv = (process.env.REFRESH_MODE||'').toLowerCase();
 const _lastFull = (prev.meta && prev.meta.lastFullRun) ? Date.parse(prev.meta.lastFullRun) : 0;
 const _metaStale = !_lastFull || (Date.now() - _lastFull) > 55*60*1000;
 const LIGHT = (modeEnv === 'light') && !_metaStale;
-const out={ dailyCreatives:prev.dailyCreatives||{}, creativeImages:{}, mqlDaily:prev.mqlDaily||{}, lsqAllDaily:prev.lsqAllDaily||{}, lsqStageDaily:prev.lsqStageDaily||{}, lsqSourceDaily:prev.lsqSourceDaily||{}, glpYesDaily:prev.glpYesDaily||{}, mqlCityDaily:prev.mqlCityDaily||{}, mqlAgeDaily:prev.mqlAgeDaily||{}, shopifyDaily:prev.shopifyDaily||{}, gokwikFunnelDaily:prev.gokwikFunnelDaily||{}, gokwikAbandonedDaily:prev.gokwikAbandonedDaily||{}, programRevenueDaily:prev.programRevenueDaily||{}, programSalesDaily:prev.programSalesDaily||{}, meta: Object.assign({}, prev.meta||{}, { sources: Object.assign({}, (prev.meta&&prev.meta.sources)||{}), version:'gha-v1', lastRun:new Date().toISOString(), mode: LIGHT?'light':'full' }) };
+const out={ dailyCreatives:prev.dailyCreatives||{}, creativeImages:{}, mqlDaily:prev.mqlDaily||{}, lsqAllDaily:prev.lsqAllDaily||{}, lsqStageDaily:prev.lsqStageDaily||{}, lsqSourceDaily:prev.lsqSourceDaily||{}, glpYesDaily:prev.glpYesDaily||{}, mqlCityDaily:prev.mqlCityDaily||{}, mqlAgeDaily:prev.mqlAgeDaily||{}, shopifyDaily:prev.shopifyDaily||{}, gokwikFunnelDaily:prev.gokwikFunnelDaily||{}, gokwikAbandonedDaily:prev.gokwikAbandonedDaily||{}, programRevenueDaily:prev.programRevenueDaily||{}, programSalesDaily:prev.programSalesDaily||{}, counsellorSalesDaily:prev.counsellorSalesDaily||{}, counsellorLeadsDaily:prev.counsellorLeadsDaily||{}, meta: Object.assign({}, prev.meta||{}, { sources: Object.assign({}, (prev.meta&&prev.meta.sources)||{}), version:'gha-v1', lastRun:new Date().toISOString(), mode: LIGHT?'light':'full' }) };
 // Mark when a full (Meta) pull is attempted so auto-escalation waits ~1h before the next one
 // (prevents hammering Meta's rate limit if a pull fails).
 if(!LIGHT) out.meta.lastFullRun = new Date().toISOString();
@@ -487,7 +499,7 @@ if(!LIGHT) try{
   }
   console.log('[spend-backfill] filled '+filled+' historical day(s)');
 }catch(e){ console.log('[spend-backfill] skipped: '+e.message); }
-await run('mql', getMQL, r=>{ for(const k of ['mqlDaily','lsqAllDaily','lsqStageDaily','lsqSourceDaily','glpYesDaily','mqlCityDaily','mqlAgeDaily']){ if(r[k]) Object.assign(out[k]=out[k]||{}, r[k]); } out.meta.mqlPulled=r.pulled; });
+await run('mql', getMQL, r=>{ for(const k of ['mqlDaily','lsqAllDaily','lsqStageDaily','lsqSourceDaily','glpYesDaily','mqlCityDaily','mqlAgeDaily','counsellorLeadsDaily']){ if(r[k]) Object.assign(out[k]=out[k]||{}, r[k]); } out.meta.mqlPulled=r.pulled; });
 await run('shopify', getShopify, r=>{ out.shopifyDaily=r.shopifyDaily; out.meta.shopifyOrders=r.orders; });
 if(!LIGHT) await run('gokwik', getGokwik, r=>{
   // MERGE by date (not replace): each daily report updates the days it carries and
@@ -508,10 +520,13 @@ await run('programRevenue', getProgramRevenue, r=>{
   // so the prior values stand.
   Object.assign(out.programRevenueDaily, r.programRevenueDaily);
   Object.assign(out.programSalesDaily, r.programSalesDaily);
+  Object.assign(out.counsellorSalesDaily, r.counsellorSalesDaily||{});
   out.meta.programRevenue = r.info;
   const cut=daysAgo(400);
   for(const k of Object.keys(out.programRevenueDaily)) if(k<cut) delete out.programRevenueDaily[k];
   for(const k of Object.keys(out.programSalesDaily)) if(k<cut) delete out.programSalesDaily[k];
+  for(const k of Object.keys(out.counsellorSalesDaily||{})) if(k<cut) delete out.counsellorSalesDaily[k];
+  for(const k of Object.keys(out.counsellorLeadsDaily||{})) if(k<cut) delete out.counsellorLeadsDaily[k];
 });
 
 const dates=Object.keys(out.dailyCreatives).sort();
