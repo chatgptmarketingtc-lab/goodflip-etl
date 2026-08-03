@@ -22,8 +22,14 @@ const PROGRAM_REV_DAYS = 240;
 const PROGRAM_REV_URL = process.env.PROGRAM_REVENUE_XLSX_URL || '';
 
 const ymd = d => d.toISOString().slice(0, 10);
-const daysAgo = n => { const d = new Date(); d.setUTCDate(d.getUTCDate() - n); return ymd(d); };
-const TODAY = ymd(new Date());
+// GoodFlip runs in India (IST = UTC+5:30). Bucket every "today" / day-window in IST so the dashboard's
+// current day flips at IST midnight, not UTC midnight (which lags India by 5.5 hours).
+const IST_MS = 5.5 * 3600 * 1000;
+const istYmd = d => new Date(d.getTime() + IST_MS).toISOString().slice(0, 10);
+// LeadSquared CreatedOn is UTC ("YYYY-MM-DD HH:MM:SS"); convert to the IST calendar date.
+const istDate = s => { if (!s) return ''; const d = new Date(String(s).replace(' ', 'T') + 'Z'); return isNaN(d) ? String(s).slice(0, 10) : istYmd(d); };
+const daysAgo = n => istYmd(new Date(Date.now() - n * 86400000));
+const TODAY = istYmd(new Date());
 
 // ---------- Meta Graph performance ----------
 function classify(campaign) {
@@ -188,7 +194,7 @@ async function getMQL(){
   }
   const mqlDaily={}, lsqAllDaily={}, lsqStageDaily={}, lsqSourceDaily={}, glpYesDaily={}, mqlCityDaily={}, mqlAgeDaily={}, counsellorLeadsDaily={};
   for(const rec of Object.values(seen)){
-    const co=(rec.CreatedOn||'').slice(0,10); if(!co||co<since||co>until)continue;
+    const co=istDate(rec.CreatedOn); if(!co||co<since||co>until)continue;
     lsqAllDaily[co]=(lsqAllDaily[co]||0)+1; { const _cn=canonCounsellor(rec.OwnerIdName); if(_cn){ (counsellorLeadsDaily[co]=counsellorLeadsDaily[co]||{}); counsellorLeadsDaily[co][_cn]=(counsellorLeadsDaily[co][_cn]||0)+1; } } const srcL=(rec.Source||'').trim().toLowerCase(); const srcKey=LSQ_SOURCE_MAP[srcL]; if(srcKey){ (lsqSourceDaily[co]=lsqSourceDaily[co]||{}); lsqSourceDaily[co][srcKey]=(lsqSourceDaily[co][srcKey]||0)+1; } if(!srcL){const us=(rec.mx_user_source||'').toLowerCase();if(us.includes('glp')){(lsqSourceDaily[co]=lsqSourceDaily[co]||{});lsqSourceDaily[co]['GLP (no source)']=(lsqSourceDaily[co]['GLP (no source)']||0)+1;}}
       if(srcL==='fb lead ads'){ const glpA=(rec.mx_are_you_open_to_a_medically_supervised_GLP_program||'').toLowerCase(); const glpTh=lsqTherapy(rec.mx_utm_disease); if(glpA.includes('yes')&&(glpTh==='Diabetes'||glpTh==='Obesity')){ glpYesDaily[co]=(glpYesDaily[co]||0)+1; } }
     const sc=scoreLead(rec); if(!sc)continue;
@@ -531,6 +537,8 @@ await run('programRevenue', getProgramRevenue, r=>{
 
 const dates=Object.keys(out.dailyCreatives).sort();
 out.meta.dateRange={ min:dates[0]||'', max:dates[dates.length-1]||'' };
+// Keep the dashboard's current day (perfWindow.until) advancing every run in IST, even on light runs.
+out.meta.perfWindow = Object.assign({ since: daysAgo(PERF_DAYS) }, out.meta.perfWindow || {}, { until: TODAY });
 writeFileSync('data.json', JSON.stringify(out));
 console.log('Wrote data.json ['+(out.meta.mode||'full')+'] | perf dates:', dates.length, '| sources:', JSON.stringify(out.meta.sources));
 // Publish the canonical feed to Vercel Blob - the neutral store BOTH dashboards read as
