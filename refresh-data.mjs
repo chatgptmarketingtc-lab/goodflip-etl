@@ -434,7 +434,7 @@ async function getProgramRevenue() {
       const pk = canon(planC, row[sti]); if (pk) { const o = a.plan[pk] = a.plan[pk] || { n: 0, rev: 0 }; o.n++; o.rev = r2(o.rev + net); o.revAll = r2((o.revAll||0) + (isFinite(parseFloat(row[naoi]))?parseFloat(row[naoi]):net)); }
       const ck = canon(cityC, row[cityi]); if (ck) { const o = a.city[ck] = a.city[ck] || { n: 0, rev: 0 }; o.n++; o.rev = r2(o.rev + net); }
       const rk = canon(repC, row[hci]); if (rk) { const o = a.rep[rk] = a.rep[rk] || { n: 0, rev: 0, dListed: 0, dGross: 0 }; o.n++; o.rev = r2(o.rev + net); if (hasDisc) { o.dListed = r2(o.dListed + listedV); o.dGross = r2(o.dGross + gross); } }
-      const _cs = canonCounsellor(row[hci]); if (_cs) { const cc = (csales[iso] = csales[iso] || {})[_cs] = (csales[iso][_cs] || { cN:0, cRev:0, nN:0, nRev:0 }); if (isCareSale(row[sti])) { cc.cN += 1; cc.cRev = r2(cc.cRev + net); } else { cc.nN += 1; cc.nRev = r2(cc.nRev + net); } }
+      const _cs = canonCounsellor(row[hci]); if (_cs) { const cc = (csales[iso] = csales[iso] || {})[_cs] = (csales[iso][_cs] || { cN:0, cRev:0, nN:0, nRev:0, careTh:{} }); if (isCareSale(row[sti])) { cc.cN += 1; cc.cRev = r2(cc.cRev + net); const _th = (p === 'Unattributed' ? 'Other' : p); (cc.careTh = cc.careTh || {}); const _to = cc.careTh[_th] = cc.careTh[_th] || { n:0, rev:0 }; _to.n += 1; _to.rev = r2(_to.rev + net); } else { cc.nN += 1; cc.nRev = r2(cc.nRev + net); } }
       const liso = progExcelIso(row[lci]);
       if (liso) { const days = Math.round((new Date(iso) - new Date(liso)) / 86400000); if (days >= 0 && days <= 3650) { a.cyc.sum += days; a.cyc.n += 1; const b = bucketOf(days); a.cyc.b[b] = (a.cyc.b[b] || 0) + 1; } }
     }
