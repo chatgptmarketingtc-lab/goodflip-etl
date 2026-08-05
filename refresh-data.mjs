@@ -159,6 +159,32 @@ function canonCounsellor(raw){ const t=(raw==null?'':raw.toString()).replace(/\s
 // (Standalone CGM/BCA/Transmitter, Diagnostics, ...) is non-care. GLP Drug is already excluded upstream.
 function isCareSale(saleType){ const x=(saleType||'').toString().toLowerCase(); return x.includes('care plan')||x.includes('sema')||(x.includes('smart')&&x.includes('cgm')); }
 const LSQ_SOURCE_MAP = {'fb lead ads':'FB Lead Ads','whatsapp marketing':'WhatsApp Marketing','webpage lead':'Webpage Lead','tata 1mg':'TATA 1MG','affiliate':'Affiliate'};
+// Canonicalise EVERY lead source into a friendly label (not just the mapped 5) so the dashboard can
+// show a full Leads-by-Source breakdown and count Instagram / Facebook / Social. Keeps the exact keys
+// the dashboard already reads ('FB Lead Ads','WhatsApp Marketing','Webpage Lead','TATA 1MG','Affiliate').
+function canonSource(raw){
+  const s=(raw||'').toString().trim().toLowerCase();
+  if(!s) return '';
+  if(s.includes('fb lead')||s.includes('fblead')) return 'FB Lead Ads';
+  if(s==='ig'||s.includes('instagram')) return 'Instagram';
+  if(s==='facebook'||s==='fb'||s==='meta') return 'Facebook';
+  if(s.includes('social')) return 'Social';
+  if(s.includes('whatsapp')) return 'WhatsApp Marketing';
+  if(s.includes('tata')) return 'TATA 1MG';
+  if(s.includes('webpage')) return 'Webpage Lead';
+  if(s.includes('affiliate')) return 'Affiliate';
+  if(s.includes('inbound')&&s.includes('phone')) return 'Inbound Phone';
+  if(s.includes('outbound')&&s.includes('phone')) return 'Outbound Phone';
+  if(s.includes('doc led')||s.includes('doc-led')) return 'Doc-Led GTM';
+  if(s.includes('pharmeasy')) return 'PharmEasy';
+  if(s.includes('direct traffic')) return 'Direct Traffic';
+  if(s.includes('contact form')) return 'Contact Form';
+  if(s.includes('spin the wheel')) return 'Spin the Wheel';
+  if(s.includes('self sourced')) return 'Self Sourced';
+  if(s.includes('direct purchase')) return 'Direct Purchase';
+  if(s.includes('referral')) return 'Referral';
+  return raw.toString().trim().replace(/\s+/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+}
 function lsqTherapy(d){ d=(d||'').toLowerCase(); if(d.includes('pre-diabetes')||d.includes('pre_diabetes')||d.includes('prediabetes'))return 'Pre-Diabetes'; if(d.includes('diabetes'))return 'Diabetes'; if(d.includes('obesity')||d.includes('weight'))return 'Obesity'; if(d.includes('glp'))return 'GLP-1'; if(d.includes('pcos'))return 'PCOS'; return null; }
 function normalizeStage(s){ s=(s||'').toString().replace(/\s+/g,' ').trim(); if(!s)return ''; const lc=s.toLowerCase(); if(lc.indexOf('reinquir')>=0||lc.indexOf('re-enquir')>=0)return 'Re-enquired'; return s; }
 function ageFails(t,age){ const a=(age||'').toLowerCase().trim(); if(!a)return false;
@@ -195,7 +221,7 @@ async function getMQL(){
   const mqlDaily={}, lsqAllDaily={}, lsqStageDaily={}, lsqSourceDaily={}, glpYesDaily={}, mqlCityDaily={}, mqlAgeDaily={}, counsellorLeadsDaily={};
   for(const rec of Object.values(seen)){
     const co=istDate(rec.CreatedOn); if(!co||co<since||co>until)continue;
-    lsqAllDaily[co]=(lsqAllDaily[co]||0)+1; { const _cn=canonCounsellor(rec.OwnerIdName); if(_cn){ (counsellorLeadsDaily[co]=counsellorLeadsDaily[co]||{}); counsellorLeadsDaily[co][_cn]=(counsellorLeadsDaily[co][_cn]||0)+1; } } const srcL=(rec.Source||'').trim().toLowerCase(); const srcKey=LSQ_SOURCE_MAP[srcL]; if(srcKey){ (lsqSourceDaily[co]=lsqSourceDaily[co]||{}); lsqSourceDaily[co][srcKey]=(lsqSourceDaily[co][srcKey]||0)+1; } if(!srcL){const us=(rec.mx_user_source||'').toLowerCase();if(us.includes('glp')){(lsqSourceDaily[co]=lsqSourceDaily[co]||{});lsqSourceDaily[co]['GLP (no source)']=(lsqSourceDaily[co]['GLP (no source)']||0)+1;}}
+    lsqAllDaily[co]=(lsqAllDaily[co]||0)+1; { const _cn=canonCounsellor(rec.OwnerIdName); if(_cn){ (counsellorLeadsDaily[co]=counsellorLeadsDaily[co]||{}); counsellorLeadsDaily[co][_cn]=(counsellorLeadsDaily[co][_cn]||0)+1; } } const srcL=(rec.Source||'').trim().toLowerCase(); let srcKey=canonSource(rec.Source); const us=(rec.mx_user_source||'').toLowerCase(); if(!srcKey){ srcKey = us.includes('glp') ? 'GLP (no source)' : '(no source)'; } (lsqSourceDaily[co]=lsqSourceDaily[co]||{}); lsqSourceDaily[co][srcKey]=(lsqSourceDaily[co][srcKey]||0)+1;
       if(srcL==='fb lead ads'){ const glpA=(rec.mx_are_you_open_to_a_medically_supervised_GLP_program||'').toLowerCase(); const glpTh=lsqTherapy(rec.mx_utm_disease); if(glpA.includes('yes')&&(glpTh==='Diabetes'||glpTh==='Obesity')){ glpYesDaily[co]=(glpYesDaily[co]||0)+1; } }
     const sc=scoreLead(rec); if(!sc)continue;
     if(srcL==='fb lead ads'){ (mqlDaily[co]=mqlDaily[co]||{}); (mqlDaily[co][sc.therapy]=mqlDaily[co][sc.therapy]||{t:0,pa:0,ro:0,rv:0,fl:0});
