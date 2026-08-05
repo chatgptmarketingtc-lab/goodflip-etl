@@ -173,8 +173,8 @@ function scoreLead(rec){ const t=lsqTherapy(rec.mx_utm_disease); if(!t)return nu
   const cs=cityStatus(rec.mx_City); if(cs===false)fails++;
   const pay=(rec.mx_Are_you_open_to_investing_in_this_paid_program_of||'').toLowerCase().trim(); const dog=(t==='Diabetes'||t==='Obesity'||t==='GLP-1'); if(dog ? (pay===''||pay.includes('not_at_this_time')) : pay.includes('not_at_this_time'))fails++;
   const hb=(rec.mx_Do_you_remember_your_HbA1c_levels||'').toLowerCase().trim();
-  if(t==='Diabetes'){ if(hb.includes('5.7')&&hb.includes('6.4'))route=true; else if(hb===''||hb.includes("don't")||hb.includes('dont')||hb.includes('unknown')||hb.includes('below_5.7')||hb.includes('normal')||hb.includes('below7.5'))fails++; }
-  if(t==='Obesity'){ const bmi=(rec.mx_Is_your_weight_or_BMI_higher_than_recommended||'').toLowerCase(); if(!(bmi.includes('overweight')||bmi.includes('obese')))fails++; }
+  if(t==='Diabetes'){ if(hb===''||hb.includes("don't")||hb.includes('dont')||hb.includes('unknown')||hb.includes('below_5.7')||hb.includes('normal')||hb.includes('below7.5'))fails++; } // MQL def (2026-08): HbA1c >=5.7 qualifies as Diabetes; no Pre-Diab routing; blanks/<5.7 fail
+  if(t==='Obesity'){ const bmi=(rec.mx_Is_your_weight_or_BMI_higher_than_recommended||'').toLowerCase(); if(!bmi.includes('obese'))fails++; } // MQL def (2026-08): only obese (BMI>=25) qualifies; overweight(23-24.9) and blanks fail
   let v; if(fails>0)v='fl'; else if(route)v='ro'; else if(cs===null)v='rv'; else v='pa';
   return { therapy:t, verdict:v }; }
 async function getMQL(){
