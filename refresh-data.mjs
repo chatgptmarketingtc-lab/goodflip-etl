@@ -477,12 +477,28 @@ async function getProgramRevenue() {
 // no revenue/lead data is exposed). Loading prev from Blob also lets the frequent light runs
 // preserve Meta/GoKwik from the last full run. Fail-soft: if Blob is unreachable, start empty.
 let prev={};
+// The feed now lives in KV (Blob was suspended). Load prev from KV first so carry-forward of
+// Meta spend / dailyCreatives keeps working when an account errors on a run. Blob is a fallback.
 try {
-  const BLOB_FEED = process.env.BLOB_FEED_URL || 'https://lh0xjabzcqzdnpyx.public.blob.vercel-storage.com/feed.json';
-  const _pr = await fetch(BLOB_FEED + '?_=' + Date.now(), { cache: 'no-store' });
-  if (_pr.ok) { prev = await _pr.json(); console.log('[prev] loaded from Blob:', Object.keys(prev).length, 'keys'); }
-  else console.log('[prev] Blob returned ' + _pr.status + ' - starting empty');
-} catch (e) { console.log('[prev] Blob load failed (starting empty):', e.message); }
+  const KV_URL = process.env.KV_REST_API_URL, KV_TOKEN = process.env.KV_REST_API_TOKEN;
+  if (KV_URL && KV_TOKEN) {
+    const _kv = await fetch(`${KV_URL}/get/${encodeURIComponent('goodflip:feed')}`, { headers: { Authorization: `Bearer ${KV_TOKEN}` }, cache: 'no-store' });
+    if (_kv.ok) {
+      const j = await _kv.json();
+      if (j && j.result) { prev = typeof j.result === 'string' ? JSON.parse(j.result) : j.result; console.log('[prev] loaded from KV:', Object.keys(prev).length, 'keys'); }
+      else console.log('[prev] KV empty - will try Blob');
+    } else console.log('[prev] KV returned ' + _kv.status + ' - will try Blob');
+  }
+} catch (e) { console.log('[prev] KV load failed:', e.message); }
+if (!Object.keys(prev).length) {
+  try {
+    const BLOB_FEED = process.env.BLOB_FEED_URL || 'https://lh0xjabzcqzdnpyx.public.blob.vercel-storage.com/feed.json';
+    const _pr = await fetch(BLOB_FEED + '?_=' + Date.now(), { cache: 'no-store' });
+    if (_pr.ok) { prev = await _pr.json(); console.log('[prev] loaded from Blob:', Object.keys(prev).length, 'keys'); }
+    else console.log('[prev] Blob returned ' + _pr.status + ' - starting empty');
+  } catch (e) { console.log('[prev] Blob load failed (starting empty):', e.message); }
+}
+
 // Two-speed refresh. REFRESH_MODE=light refreshes only the fast, frequently-changing sources
 // (LeadSquared, Shopify, Program Revenue) and PRESERVES the slow/periodic ones (Meta Graph and
 // GoKwik) from the previous data.json. A light run finishes in ~1 min, so an external cron can
@@ -504,9 +520,10 @@ const token=process.env.META_ACCESS_TOKEN;
 async function run(name, fn, apply){ try{ const r=await fn(); apply(r); out.meta.sources[name]='ok'; console.log('['+name+'] ok'); }catch(e){ out.meta.sources[name]='error: '+e.message; console.error('['+name+'] FAILED:', e.message); } }
 
 if(!LIGHT) await run('performance', ()=>{ if(!token)throw new Error('META_ACCESS_TOKEN missing'); return getPerformance(token); },
-  r=>{ const bad=Object.values(r.accountStatus||{}).filter(v=>!String(v).startsWith('ok'));
-      if(bad.length){ console.log('[performance] PARTIAL - '+bad.length+' account(s) failed; keeping previous dailyCreatives'); }
-      else { Object.assign(out.dailyCreatives, r.dailyCreatives); }
+    r=>{ const bad=Object.values(r.accountStatus||{}).filter(v=>!String(v).startsWith('ok'));
+      if(bad.length){ console.log('[performance] PARTIAL - '+bad.length+' account(s) failed; keeping previous dailyCreatives');
+        out.meta.spendStale=true; out.meta.spendAsOfRun=(prev.meta&&prev.meta.lastRun)||null; }
+      else { Object.assign(out.dailyCreatives, r.dailyCreatives); out.meta.spendStale=false; out.meta.spendAsOfRun=null; }
       out.meta.accountStatus=r.accountStatus; out.meta.perfWindow=r.window; });
 
 // One-off historical Meta spend (29 Nov 2025 - 13 May 2026), sourced from Coupler because the
