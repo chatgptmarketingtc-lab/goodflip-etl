@@ -590,6 +590,30 @@ try {
   console.error('[blob] publish FAILED (data.json still committed, feed just not refreshed):', e.message);
 }
 
+// Publish a SLIM scorecard feed to Vercel KV - the permanent, bandwidth-proof store the dashboard
+// reads via /api/feed. KV is metered by request COUNT (not data transfer), so the always-on TV
+// can't exhaust it the way it exhausted Blob. Only the ~10 keys the scorecard uses are sent
+// (creativeImages etc. stay out), keeping the value small. FAIL-SOFT.
+try {
+  const KV_URL = process.env.KV_REST_API_URL, KV_TOKEN = process.env.KV_REST_API_TOKEN;
+  if (KV_URL && KV_TOKEN) {
+    const SLIM = ['meta','dailyCreatives','mqlDaily','lsqSourceDaily','glpYesDaily','mqlCityDaily','mqlAgeDaily','programSalesDaily','counsellorSalesDaily','counsellorLeadsDaily'];
+    const slim = {}; for (const k of SLIM) slim[k] = out[k];
+    const payload = JSON.stringify(slim);
+    const r = await fetch(`${KV_URL}/set/${encodeURIComponent('goodflip:feed')}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${KV_TOKEN}`, 'Content-Type': 'application/json' },
+      body: payload
+    });
+    if (!r.ok) throw new Error('KV set ' + r.status + ': ' + (await r.text()).slice(0, 140));
+    console.log('[kv] published slim feed -> goodflip:feed (' + (payload.length / 1024 | 0) + ' KB)');
+  } else {
+    console.log('[kv] skipped: KV_REST_API_URL / KV_REST_API_TOKEN not set');
+  }
+} catch (e) {
+  console.error('[kv] publish FAILED:', e.message);
+}
+
 // Fail the job only if EVERY source errored (so a partial outage still commits good data).
 const oks=Object.values(out.meta.sources).filter(v=>v==='ok').length;
 if(oks===0){ console.error('All sources failed.'); process.exit(1); }
