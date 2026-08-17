@@ -154,7 +154,7 @@ const LSQ_FIELDS = ['ProspectID','CreatedOn','mx_utm_disease','mx_Age_Group','mx
 // team-lead / ops owners are excluded so the board shows only floor counsellors.
 const COUNSELLOR_EXCLUDE = new Set(['','system','shantha s','prakash chandra']);
 const COUNSELLOR_ALIAS = { 'md shaqib ahmad':'Md Shaqib', 'rahul kumar singhal':'Rahul Singhal', 'nisha v':'Nisha v' };
-function canonCounsellor(raw){ const t=(raw==null?'':raw.toString()).replace(/\s+/g,' ').trim(); const lc=t.toLowerCase(); if(COUNSELLOR_EXCLUDE.has(lc))return null; return COUNSELLOR_ALIAS[lc]||t; }
+function canonCounsellor(raw){ const t=(raw==null?'':raw.toString()).replace(/\s+/g,' ').trim(); const lc=t.toLowerCase(); if(COUNSELLOR_EXCLUDE.has(lc))return null; const base=(COUNSELLOR_ALIAS[lc]||t).toLowerCase(); return base.replace(/\b\w/g,c=>c.toUpperCase()); } // Title-case so LSQ lead owners (e.g. "jaspreet singh") and revenue-sheet sales names (e.g. "Jaspreet Singh") reconcile to one key.
 // Care program (workspace 'Program' rule) = Care Plan + Sema Care Plan + Smart CGM; everything else
 // (Standalone CGM/BCA/Transmitter, Diagnostics, ...) is non-care. GLP Drug is already excluded upstream.
 function isCareSale(saleType){ const x=(saleType||'').toString().toLowerCase(); return x.includes('care plan')||x.includes('sema')||(x.includes('smart')&&x.includes('cgm')); }
