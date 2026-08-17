@@ -212,14 +212,23 @@ async function getMQL(){
   const since=daysAgo(MQL_DAYS), until=TODAY;
   const base=`https://${host}/v2/LeadManagement.svc/Leads.RecentlyModified?accessKey=${encodeURIComponent(ak)}&secretKey=${encodeURIComponent(sk)}`;
   const seen={};
+  const _sleep=(ms)=>new Promise(res=>setTimeout(res,ms)); // LSQ burst limit is 10 calls / 5s; pace paging to stay under it.
   for(let page=1; page<=60; page++){
     const body={ Parameter:{FromDate:since+' 00:00:00',ToDate:until+' 23:59:59'}, Columns:{Include_CSV:LSQ_FIELDS.join(',')}, Sorting:{ColumnName:'CreatedOn',Direction:'1'}, Paging:{PageIndex:page,PageSize:1000} };
-    const r=await fetch(base,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    if(!r.ok){ const t=await r.text(); throw new Error(`LSQ ${r.status}: ${t.slice(0,300)}`); }
+    let r, tries=0;
+    while(true){
+      r=await fetch(base,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      if(r.ok)break;
+      const t=await r.text();
+      // LSQ 429 (MXAPIRateLimitExceededException) is transient: back off and retry rather than failing the whole pull.
+      if((r.status===429||/RateLimit/i.test(t)) && tries<6){ tries++; await _sleep(6000*tries); continue; }
+      throw new Error(`LSQ ${r.status}: ${t.slice(0,300)}`);
+    }
     const j=await r.json(); const leads=j.Leads||j.RecentlyModifiedLeads||(Array.isArray(j)?j:[])||[];
     if(!leads.length)break;
     for(const raw of leads){ const rec=flatten(raw); if(rec.ProspectID&&!seen[rec.ProspectID])seen[rec.ProspectID]=rec; }
     if(leads.length<1000)break;
+    await _sleep(700); // ~1.4 calls/sec: comfortably under LSQ's 10-per-5s ceiling
   }
   const mqlDaily={}, lsqAllDaily={}, lsqStageDaily={}, lsqSourceDaily={}, glpYesDaily={}, mqlCityDaily={}, mqlAgeDaily={}, counsellorLeadsDaily={};
   for(const rec of Object.values(seen)){
