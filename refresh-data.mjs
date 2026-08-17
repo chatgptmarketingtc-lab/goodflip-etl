@@ -194,15 +194,18 @@ function ageFails(t,age){ const a=(age||'').toLowerCase().trim(); if(!a)return f
   return false; }
 function cityStatus(c){ c=(c||'').trim().toLowerCase(); if(!c)return null; for(const qc of QUALIFYING_CITIES){ if(c.includes(qc)||qc.includes(c))return true; } return false; }
 function flatten(lead){ if(lead&&Array.isArray(lead.LeadPropertyList)){ const o={}; for(const p of lead.LeadPropertyList)o[p.Attribute]=p.Value; return o; } return lead||{}; }
-function scoreLead(rec){ const t=lsqTherapy(rec.mx_utm_disease); if(!t)return null; let fails=0,route=false;
-  if(ageFails(t,rec.mx_Age_Group))fails++;
-  const cs=cityStatus(rec.mx_City); if(cs===false)fails++;
-  const pay=(rec.mx_Are_you_open_to_investing_in_this_paid_program_of||'').toLowerCase().trim(); const dog=(t==='Diabetes'||t==='Obesity'||t==='GLP-1'); if(dog ? (pay===''||pay.includes('not_at_this_time')) : pay.includes('not_at_this_time'))fails++;
+function scoreLead(rec){ const t=lsqTherapy(rec.mx_utm_disease); if(!t)return null; let route=false;
+  const rs={age:false,city:false,pay:false,payBlank:false,clin:false,clinBlank:false};
+  if(ageFails(t,rec.mx_Age_Group))rs.age=true;
+  const cs=cityStatus(rec.mx_City); if(cs===false)rs.city=true;
+  const pay=(rec.mx_Are_you_open_to_investing_in_this_paid_program_of||'').toLowerCase().trim(); const dog=(t==='Diabetes'||t==='Obesity'||t==='GLP-1');
+  if(dog){ if(pay===''){rs.pay=true;rs.payBlank=true;} else if(pay.includes('not_at_this_time'))rs.pay=true; } else { if(pay.includes('not_at_this_time'))rs.pay=true; }
   const hb=(rec.mx_Do_you_remember_your_HbA1c_levels||'').toLowerCase().trim();
-  if(t==='Diabetes'){ if(hb===''||hb.includes("don't")||hb.includes('dont')||hb.includes('unknown')||hb.includes('below_5.7')||hb.includes('normal')||hb.includes('below7.5'))fails++; } // MQL def (2026-08): HbA1c >=5.7 qualifies as Diabetes; no Pre-Diab routing; blanks/<5.7 fail
-  if(t==='Obesity'){ const bmi=(rec.mx_Is_your_weight_or_BMI_higher_than_recommended||'').toLowerCase(); if(!bmi.includes('obese'))fails++; } // MQL def (2026-08): only obese (BMI>=25) qualifies; overweight(23-24.9) and blanks fail
+  if(t==='Diabetes'){ if(hb===''){rs.clin=true;rs.clinBlank=true;} else if(hb.includes("don't")||hb.includes('dont')||hb.includes('unknown')||hb.includes('below_5.7')||hb.includes('normal')||hb.includes('below7.5'))rs.clin=true; } // MQL def (2026-08): HbA1c >=5.7 qualifies; rs.clinBlank = truly empty vs answered-disqualifying
+  if(t==='Obesity'){ const bmi=(rec.mx_Is_your_weight_or_BMI_higher_than_recommended||'').toLowerCase().trim(); if(bmi===''){rs.clin=true;rs.clinBlank=true;} else if(!bmi.includes('obese'))rs.clin=true; } // MQL def (2026-08): only obese (BMI>=25) qualifies; rs.clinBlank = truly empty vs overweight/idk/legacy
+  const fails=(rs.age?1:0)+(rs.city?1:0)+(rs.pay?1:0)+(rs.clin?1:0);
   let v; if(fails>0)v='fl'; else if(route)v='ro'; else if(cs===null)v='rv'; else v='pa';
-  return { therapy:t, verdict:v }; }
+  return { therapy:t, verdict:v, rs }; }
 async function getMQL(){
   const host=process.env.LSQ_HOST, ak=process.env.LSQ_ACCESS_KEY, sk=process.env.LSQ_SECRET_KEY;
   if(!host||!ak||!sk) throw new Error('LSQ creds missing');
@@ -224,8 +227,8 @@ async function getMQL(){
     lsqAllDaily[co]=(lsqAllDaily[co]||0)+1; { const _cn=canonCounsellor(rec.OwnerIdName); if(_cn){ (counsellorLeadsDaily[co]=counsellorLeadsDaily[co]||{}); counsellorLeadsDaily[co][_cn]=(counsellorLeadsDaily[co][_cn]||0)+1; } } const srcL=(rec.Source||'').trim().toLowerCase(); let srcKey=canonSource(rec.Source); const us=(rec.mx_user_source||'').toLowerCase(); if(!srcKey){ srcKey = us.includes('glp') ? 'GLP (no source)' : '(no source)'; } (lsqSourceDaily[co]=lsqSourceDaily[co]||{}); lsqSourceDaily[co][srcKey]=(lsqSourceDaily[co][srcKey]||0)+1;
       if(srcL==='fb lead ads'){ const glpA=(rec.mx_are_you_open_to_a_medically_supervised_GLP_program||'').toLowerCase(); const glpTh=lsqTherapy(rec.mx_utm_disease); if(glpA.includes('yes')&&(glpTh==='Diabetes'||glpTh==='Obesity')){ glpYesDaily[co]=(glpYesDaily[co]||0)+1; } }
     const sc=scoreLead(rec); if(!sc)continue;
-    if(srcL==='fb lead ads'){ (mqlDaily[co]=mqlDaily[co]||{}); (mqlDaily[co][sc.therapy]=mqlDaily[co][sc.therapy]||{t:0,pa:0,ro:0,rv:0,fl:0});
-    const c=mqlDaily[co][sc.therapy]; c.t++; c[sc.verdict]++; if(sc.verdict==='pa'||sc.verdict==='ro'){ const cty=(rec.mx_City||'').trim()||'(blank)', ag=(rec.mx_Age_Group||'').trim()||'(blank)'; (mqlCityDaily[co]=mqlCityDaily[co]||{}); mqlCityDaily[co][cty]=(mqlCityDaily[co][cty]||0)+1; (mqlAgeDaily[co]=mqlAgeDaily[co]||{}); mqlAgeDaily[co][ag]=(mqlAgeDaily[co][ag]||0)+1; } }
+    if(srcL==='fb lead ads'){ (mqlDaily[co]=mqlDaily[co]||{}); (mqlDaily[co][sc.therapy]=mqlDaily[co][sc.therapy]||{t:0,pa:0,ro:0,rv:0,fl:0,r:{age:0,city:0,pay:0,payBlank:0,clin:0,clinBlank:0}});
+    const c=mqlDaily[co][sc.therapy]; if(!c.r)c.r={age:0,city:0,pay:0,payBlank:0,clin:0,clinBlank:0}; c.t++; c[sc.verdict]++; { const R=sc.rs; if(R.age)c.r.age++; if(R.city)c.r.city++; if(R.pay)c.r.pay++; if(R.payBlank)c.r.payBlank++; if(R.clin)c.r.clin++; if(R.clinBlank)c.r.clinBlank++; } if(sc.verdict==='pa'||sc.verdict==='ro'){ const cty=(rec.mx_City||'').trim()||'(blank)', ag=(rec.mx_Age_Group||'').trim()||'(blank)'; (mqlCityDaily[co]=mqlCityDaily[co]||{}); mqlCityDaily[co][cty]=(mqlCityDaily[co][cty]||0)+1; (mqlAgeDaily[co]=mqlAgeDaily[co]||{}); mqlAgeDaily[co][ag]=(mqlAgeDaily[co][ag]||0)+1; } }
     const stg=normalizeStage(rec.ProspectStage);
     if(stg){ (lsqStageDaily[co]=lsqStageDaily[co]||{}); (lsqStageDaily[co][sc.therapy]=lsqStageDaily[co][sc.therapy]||{}); lsqStageDaily[co][sc.therapy][stg]=(lsqStageDaily[co][sc.therapy][stg]||0)+1; }
   }
