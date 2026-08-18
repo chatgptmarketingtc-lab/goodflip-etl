@@ -20,6 +20,10 @@ const EXCLUDE = ['tatva practice', 'tatvapractice', 'bihar abdm', 'lookalike dr 
 const PERF_DAYS = 45, MQL_DAYS = 60, SHOP_DAYS = 45;
 const PROGRAM_REV_DAYS = 240;
 const PROGRAM_REV_URL = process.env.PROGRAM_REVENUE_XLSX_URL || '';
+const RENEWAL_URL = process.env.RENEWAL_XLSX_URL || '';
+// Monthly renewed-CARE-PLAN revenue targets (per Archana). Add new months as they are set.
+const RENEWAL_TARGETS = { '2026-08': 274000 };
+
 
 const ymd = d => d.toISOString().slice(0, 10);
 // GoodFlip runs in India (IST = UTC+5:30). Bucket every "today" / day-window in IST so the dashboard's
@@ -573,6 +577,37 @@ if(!LIGHT) await run('gokwik', getGokwik, r=>{
   for(const k of Object.keys(out.gokwikFunnelDaily)) if(k<cut) delete out.gokwikFunnelDaily[k];
   for(const k of Object.keys(out.gokwikAbandonedDaily)) if(k<cut) delete out.gokwikAbandonedDaily[k];
 });
+
+// ---------- Renewed care-plan revenue (Renewal & Referral sheet) ----------
+// Turn a SharePoint share link (…/:x:/g/personal/<user>/<token>…) into an anonymous xlsx download URL.
+function toSpDownload(u){ const m=String(u||'').match(/^(https?:\/\/[^/]+)\/:[a-z]:\/[a-z]\/(personal\/[^/]+)\/([^/?#]+)/i); return m ? `${m[1]}/${m[2]}/_layouts/15/download.aspx?share=${m[3]}` : String(u||''); }
+async function getRenewalRevenue(){
+  if(!RENEWAL_URL) throw new Error('RENEWAL_XLSX_URL secret not set');
+  const XLSX = await import('xlsx');
+  const base = toSpDownload(RENEWAL_URL);
+  const url = base + (base.includes('?') ? '&' : '?') + 'nocache=' + Date.now();
+  const r = await fetch(url, { cache:'no-store', headers:{ 'User-Agent':'adradar-refresh', 'Cache-Control':'no-cache', 'Pragma':'no-cache' } });
+  if(!r.ok){ const t=await r.text().catch(()=> ''); throw new Error(`renewal SharePoint ${r.status}: ${t.slice(0,120)}`); }
+  if(((r.headers.get('content-type')||'').toLowerCase()).includes('text/html')) throw new Error('renewal: got HTML not xlsx (share link likely not anonymous / login required)');
+  const wb = XLSX.read(Buffer.from(await r.arrayBuffer()), { cellDates:false });
+  const MABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const ym = TODAY.slice(0,7); const mo = MABBR[parseInt(TODAY.slice(5,7),10)-1];
+  const sheetName = wb.SheetNames.find(n=>n.trim().toLowerCase()===mo.toLowerCase()) || wb.SheetNames.find(n=>n.trim().toLowerCase().startsWith(mo.toLowerCase()));
+  if(!sheetName) throw new Error('renewal: no sheet for month '+mo+' (have: '+wb.SheetNames.join(',')+')');
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header:1, raw:true, defval:null });
+  const hdr = (rows[0]||[]).map(h=> h==null?'':h.toString().trim());
+  const norm = s => s.toLowerCase().replace(/[^a-z0-9]/g,'');
+  const payI = hdr.findIndex(h=> norm(h).includes('paymentamount'));
+  const planI = hdr.findIndex(h=> norm(h).includes('renewd') || norm(h).includes('renewed'));
+  if(payI<0 || planI<0) throw new Error('renewal: missing Payment Amount / Renewd Plan header on sheet '+sheetName);
+  let achieved=0, count=0;
+  for(let i=1;i<rows.length;i++){ const row=rows[i]; if(!row) continue; const amt=parseFloat(row[payI]); if(!isFinite(amt)) continue; const plan=(row[planI]==null?'':row[planI].toString().trim()); if(plan){ achieved+=amt; count++; } }
+  return { achieved: Math.round(achieved), count, month: mo, ym, sheet: sheetName, target: RENEWAL_TARGETS[ym]||0, asOf: new Date().toISOString() };
+}
+
+// Renewed care-plan revenue vs monthly target (auto-pulled from the Renewal & Referral sheet). Fail-soft: a bad
+// fetch keeps the previous meta.renewal instead of blanking the tracker.
+await run('renewal', getRenewalRevenue, r=>{ out.meta.renewal = r; });
 
 await run('programRevenue', getProgramRevenue, r=>{
   // MERGE by date like GoKwik: each run recomputes the full 120-day window from the
