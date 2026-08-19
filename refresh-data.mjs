@@ -23,6 +23,8 @@ const PROGRAM_REV_URL = process.env.PROGRAM_REVENUE_XLSX_URL || '';
 const RENEWAL_URL = process.env.RENEWAL_XLSX_URL || '';
 // Monthly renewed-CARE-PLAN revenue targets (per Archana). Add new months as they are set.
 const RENEWAL_TARGETS = { '2026-08': 274000 };
+// Monthly renewed devices + nutraceuticals revenue target (per Archana).
+const RENEWAL_DN_TARGETS = { '2026-08': 100000 };
 
 
 const ymd = d => d.toISOString().slice(0, 10);
@@ -599,10 +601,12 @@ async function getRenewalRevenue(){
   const norm = s => s.toLowerCase().replace(/[^a-z0-9]/g,'');
   const payI = hdr.findIndex(h=> norm(h).includes('paymentamount'));
   const planI = hdr.findIndex(h=> norm(h).includes('renewd') || norm(h).includes('renewed'));
+  const nutI = hdr.findIndex(h=> norm(h).includes('nutraceutical') || norm(h).includes('nutra'));
+  const devI = hdr.findIndex(h=> norm(h)==='devices' || norm(h).includes('device'));
   if(payI<0 || planI<0) throw new Error('renewal: missing Payment Amount / Renewd Plan header on sheet '+sheetName);
-  let achieved=0, count=0;
-  for(let i=1;i<rows.length;i++){ const row=rows[i]; if(!row) continue; const amt=parseFloat(row[payI]); if(!isFinite(amt)) continue; const plan=(row[planI]==null?'':row[planI].toString().trim()); if(plan){ achieved+=amt; count++; } }
-  return { achieved: Math.round(achieved), count, month: mo, ym, sheet: sheetName, target: RENEWAL_TARGETS[ym]||0, asOf: new Date().toISOString() };
+  let achieved=0, count=0, dnAchieved=0, dnCount=0;
+  for(let i=1;i<rows.length;i++){ const row=rows[i]; if(!row) continue; const amt=parseFloat(row[payI]); if(!isFinite(amt)) continue; const plan=(row[planI]==null?'':row[planI].toString().trim()); if(plan){ achieved+=amt; count++; } const _dn=((nutI>=0&&row[nutI]!=null&&row[nutI].toString().trim()!=='')||(devI>=0&&row[devI]!=null&&row[devI].toString().trim()!=='')); if(_dn){ dnAchieved+=amt; dnCount++; } }
+  return { achieved: Math.round(achieved), count, month: mo, ym, sheet: sheetName, target: RENEWAL_TARGETS[ym]||0, achievedDN: Math.round(dnAchieved), countDN: dnCount, targetDN: RENEWAL_DN_TARGETS[ym]||0, asOf: new Date().toISOString() };
 }
 
 // Renewed care-plan revenue vs monthly target (auto-pulled from the Renewal & Referral sheet). Fail-soft: a bad
