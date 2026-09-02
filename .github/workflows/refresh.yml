@@ -38,6 +38,9 @@ jobs:
           GMAIL_IMAP_APP_PASSWORD: ${{ secrets.GMAIL_IMAP_APP_PASSWORD }}
           PROGRAM_REVENUE_XLSX_URL: ${{ secrets.PROGRAM_REVENUE_XLSX_URL }}
           RENEWAL_XLSX_URL: ${{ secrets.RENEWAL_XLSX_URL }}
+          FRAPPE_API_KEY: ${{ secrets.FRAPPE_API_KEY }}
+          FRAPPE_API_SECRET: ${{ secrets.FRAPPE_API_SECRET }}
+          FRAPPE_BASE_URL: ${{ secrets.FRAPPE_BASE_URL }}
           BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
           KV_REST_API_URL: ${{ secrets.KV_REST_API_URL }}
           KV_REST_API_TOKEN: ${{ secrets.KV_REST_API_TOKEN }}
