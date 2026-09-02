@@ -212,6 +212,48 @@ function scoreLead(rec){ const t=lsqTherapy(rec.mx_utm_disease); if(!t)return nu
   const fails=(rs.age?1:0)+(rs.city?1:0)+(rs.pay?1:0)+(rs.clin?1:0);
   let v; if(fails>0)v='fl'; else if(route)v='ro'; else if(cs===null)v='rv'; else v='pa';
   return { therapy:t, verdict:v, rs }; }
+// ---------- Frappe CRM lead pull (replaces LeadSquared, which was shut down 2026) ----------
+// Server-to-server token auth against one.tatvacare.in. Produces the SAME feed fields the dashboard
+// already reads (lsqAllDaily / lsqSourceDaily / lsqStageDaily / counsellorLeadsDaily). MQL/therapy/
+// clinical fields are left EMPTY on purpose: Frappe leads don't carry disease/HbA1c/BMI/age at the
+// lead level, so those metrics are intentionally dropped rather than faked from blank fields.
+const FRAPPE_BASE = (process.env.FRAPPE_BASE_URL || 'https://one.tatvacare.in').replace(/\/+$/,'');
+const FRAPPE_KEY = process.env.FRAPPE_API_KEY || '';
+const FRAPPE_SECRET = process.env.FRAPPE_API_SECRET || '';
+// Frappe source values -> dashboard display keys (light normalization; unknowns pass through as-is).
+const FRAPPE_SRC_MAP = { 'fb lead ads':'FB Lead Ads','whatsapp marketing':'WhatsApp Marketing','partner api':'Partner API','tata 1mg':'TATA 1MG','affiliate':'Affiliate','instagram':'Instagram','webpage lead':'Webpage Lead','contact form 7':'Webpage Lead','self sourced':'Self Sourced','inbound phone call':'Inbound Phone Call','outbound phone call':'Outbound Phone Call','doc led gtm':'Doc Led GTM','customer referral':'Customer Referral','existing customer referral':'Customer Referral' };
+function frappeSource(s){ const t=(s==null?'':String(s)).trim(); if(!t) return '(no source)'; return FRAPPE_SRC_MAP[t.toLowerCase()] || t; }
+// lead_owner is an email (e.g. shaqib.ahmad@...). Derive "First Last" and reconcile via canonCounsellor
+// so lead owners match the revenue-sheet counsellor names on the leaderboard.
+function frappeOwnerName(email){ if(!email) return null; const local=String(email).split('@')[0]; if(['administrator','guest','admin'].includes(local.toLowerCase())) return null; const nm=local.split(/[._-]+/).filter(Boolean).map(w=>w.charAt(0).toUpperCase()+w.slice(1)).join(' '); return canonCounsellor(nm); }
+async function getFrappeLeads(){
+  if(!FRAPPE_KEY || !FRAPPE_SECRET) throw new Error('FRAPPE_API_KEY / FRAPPE_API_SECRET missing');
+  const since=daysAgo(MQL_DAYS), until=TODAY;
+  const fields=['creation','source','custom_source_origin','custom_stage','lead_owner'];
+  const filters=[['creation','>=',since+' 00:00:00'],['creation','<=',until+' 23:59:59'],['custom_vertical','=','Goodflip']];
+  const headers={ 'Authorization':'token '+FRAPPE_KEY+':'+FRAPPE_SECRET, 'Accept':'application/json' };
+  const PAGE=2000; let offset=0; const rows=[];
+  for(let i=0;i<300;i++){
+    const u=FRAPPE_BASE+'/api/method/frappe.client.get_list?doctype='+encodeURIComponent('CRM Lead')
+      +'&fields='+encodeURIComponent(JSON.stringify(fields))
+      +'&filters='+encodeURIComponent(JSON.stringify(filters))
+      +'&order_by='+encodeURIComponent('creation desc')
+      +'&limit_page_length='+PAGE+'&limit_start='+offset;
+    const r=await fetch(u,{headers});
+    if(!r.ok){ const t=await r.text().catch(()=> ''); throw new Error('Frappe '+r.status+': '+t.slice(0,200)); }
+    const j=await r.json(); const batch=j.message||[]; rows.push(...batch);
+    if(batch.length<PAGE) break; offset+=PAGE;
+  }
+  const lsqAllDaily={}, lsqSourceDaily={}, lsqStageDaily={}, counsellorLeadsDaily={};
+  for(const rec of rows){
+    const co=(rec.creation||'').slice(0,10); if(!co||co<since||co>until)continue;
+    lsqAllDaily[co]=(lsqAllDaily[co]||0)+1;
+    const src=frappeSource(rec.source); (lsqSourceDaily[co]=lsqSourceDaily[co]||{}); lsqSourceDaily[co][src]=(lsqSourceDaily[co][src]||0)+1;
+    const nm=frappeOwnerName(rec.lead_owner); if(nm){ (counsellorLeadsDaily[co]=counsellorLeadsDaily[co]||{}); counsellorLeadsDaily[co][nm]=(counsellorLeadsDaily[co][nm]||0)+1; }
+    const stg=(rec.custom_stage==null?'':String(rec.custom_stage).split('::').pop().trim()); if(stg){ (lsqStageDaily[co]=lsqStageDaily[co]||{}); lsqStageDaily[co][stg]=(lsqStageDaily[co][stg]||0)+1; }
+  }
+  return { lsqAllDaily, lsqSourceDaily, lsqStageDaily, counsellorLeadsDaily, mqlDaily:{}, glpYesDaily:{}, mqlCityDaily:{}, mqlAgeDaily:{}, pulled:rows.length, window:{since,until} };
+}
 async function getMQL(){
   const host=process.env.LSQ_HOST, ak=process.env.LSQ_ACCESS_KEY, sk=process.env.LSQ_SECRET_KEY;
   if(!host||!ak||!sk) throw new Error('LSQ creds missing');
@@ -566,7 +608,7 @@ if(!LIGHT) try{
   }
   console.log('[spend-backfill] filled '+filled+' historical day(s)');
 }catch(e){ console.log('[spend-backfill] skipped: '+e.message); }
-await run('mql', getMQL, r=>{ for(const k of ['mqlDaily','lsqAllDaily','lsqStageDaily','lsqSourceDaily','glpYesDaily','mqlCityDaily','mqlAgeDaily','counsellorLeadsDaily']){ if(r[k]) Object.assign(out[k]=out[k]||{}, r[k]); } out.meta.mqlPulled=r.pulled; });
+await run('frappeLeads', getFrappeLeads, r=>{ for(const k of ['lsqAllDaily','lsqStageDaily','lsqSourceDaily','counsellorLeadsDaily']){ if(r[k]) Object.assign(out[k]=out[k]||{}, r[k]); } out.meta.leadsPulled=r.pulled; out.meta.leadSource='frappe'; });
 await run('shopify', getShopify, r=>{ out.shopifyDaily=r.shopifyDaily; out.meta.shopifyOrders=r.orders; });
 if(!LIGHT) await run('gokwik', getGokwik, r=>{
   // MERGE by date (not replace): each daily report updates the days it carries and
