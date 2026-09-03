@@ -26,7 +26,6 @@ const RENEWAL_TARGETS = { '2026-08': 274000 };
 // Monthly renewed devices + nutraceuticals revenue target (per Archana).
 const RENEWAL_DN_TARGETS = { '2026-08': 100000 };
 
-
 const ymd = d => d.toISOString().slice(0, 10);
 // GoodFlip runs in India (IST = UTC+5:30). Bucket every "today" / day-window in IST so the dashboard's
 // current day flips at IST midnight, not UTC midnight (which lags India by 5.5 hours).
@@ -200,59 +199,79 @@ function ageFails(t,age){ const a=(age||'').toLowerCase().trim(); if(!a)return f
   return false; }
 function cityStatus(c){ c=(c||'').trim().toLowerCase(); if(!c)return null; for(const qc of QUALIFYING_CITIES){ if(c.includes(qc)||qc.includes(c))return true; } return false; }
 function flatten(lead){ if(lead&&Array.isArray(lead.LeadPropertyList)){ const o={}; for(const p of lead.LeadPropertyList)o[p.Attribute]=p.Value; return o; } return lead||{}; }
-function scoreLead(rec){ const t=lsqTherapy(rec.mx_utm_disease); if(!t)return null; let route=false;
-  const rs={age:false,city:false,pay:false,payBlank:false,clin:false,clinBlank:false};
-  if(ageFails(t,rec.mx_Age_Group))rs.age=true;
-  const cs=cityStatus(rec.mx_City); if(cs===false)rs.city=true;
-  const pay=(rec.mx_Are_you_open_to_investing_in_this_paid_program_of||'').toLowerCase().trim(); const dog=(t==='Diabetes'||t==='Obesity'||t==='GLP-1');
-  if(dog){ if(pay===''){rs.pay=true;rs.payBlank=true;} else if(pay.includes('not_at_this_time'))rs.pay=true; } else { if(pay.includes('not_at_this_time'))rs.pay=true; }
+function scoreLead(rec){ const t=lsqTherapy(rec.mx_utm_disease); if(!t)return null; let fails=0,route=false;
+  if(ageFails(t,rec.mx_Age_Group))fails++;
+  const cs=cityStatus(rec.mx_City); if(cs===false)fails++;
+  const pay=(rec.mx_Are_you_open_to_investing_in_this_paid_program_of||'').toLowerCase().trim(); const dog=(t==='Diabetes'||t==='Obesity'||t==='GLP-1'); if(dog ? (pay===''||pay.includes('not_at_this_time')) : pay.includes('not_at_this_time'))fails++;
   const hb=(rec.mx_Do_you_remember_your_HbA1c_levels||'').toLowerCase().trim();
-  if(t==='Diabetes'){ if(hb===''){rs.clin=true;rs.clinBlank=true;} else if(hb.includes("don't")||hb.includes('dont')||hb.includes('unknown')||hb.includes('below_5.7')||hb.includes('normal')||hb.includes('below7.5'))rs.clin=true; } // MQL def (2026-08): HbA1c >=5.7 qualifies; rs.clinBlank = truly empty vs answered-disqualifying
-  if(t==='Obesity'){ const bmi=(rec.mx_Is_your_weight_or_BMI_higher_than_recommended||'').toLowerCase().trim(); if(bmi===''){rs.clin=true;rs.clinBlank=true;} else if(!bmi.includes('obese'))rs.clin=true; } // MQL def (2026-08): only obese (BMI>=25) qualifies; rs.clinBlank = truly empty vs overweight/idk/legacy
-  const fails=(rs.age?1:0)+(rs.city?1:0)+(rs.pay?1:0)+(rs.clin?1:0);
+  if(t==='Diabetes'){ if(hb===''||hb.includes("don't")||hb.includes('dont')||hb.includes('unknown')||hb.includes('below_5.7')||hb.includes('normal')||hb.includes('below7.5'))fails++; } // MQL def (2026-08): HbA1c >=5.7 qualifies as Diabetes; no Pre-Diab routing; blanks/<5.7 fail
+  if(t==='Obesity'){ const bmi=(rec.mx_Is_your_weight_or_BMI_higher_than_recommended||'').toLowerCase(); if(!bmi.includes('obese'))fails++; } // MQL def (2026-08): only obese (BMI>=25) qualifies; overweight(23-24.9) and blanks fail
   let v; if(fails>0)v='fl'; else if(route)v='ro'; else if(cs===null)v='rv'; else v='pa';
-  return { therapy:t, verdict:v, rs }; }
-// ---------- Frappe CRM lead pull (replaces LeadSquared, which was shut down 2026) ----------
-// Server-to-server token auth against one.tatvacare.in. Produces the SAME feed fields the dashboard
-// already reads (lsqAllDaily / lsqSourceDaily / lsqStageDaily / counsellorLeadsDaily). MQL/therapy/
-// clinical fields are left EMPTY on purpose: Frappe leads don't carry disease/HbA1c/BMI/age at the
-// lead level, so those metrics are intentionally dropped rather than faked from blank fields.
-const FRAPPE_BASE = (process.env.FRAPPE_BASE_URL || 'https://one.tatvacare.in').replace(/\/+$/,'');
-const FRAPPE_KEY = process.env.FRAPPE_API_KEY || '';
-const FRAPPE_SECRET = process.env.FRAPPE_API_SECRET || '';
+  return { therapy:t, verdict:v }; }
+// ---------- Frappe CRM lead pull via the Partner API (api.mytatva.in) ----------
+// LeadSquared was shut down; leads now live in Frappe CRM, read through the Frappe Partner API.
+// Produces the SAME feed fields the dashboard already reads (lsqAllDaily / lsqSourceDaily /
+// lsqStageDaily / counsellorLeadsDaily). The /leads/list rows carry no per-lead created date, but the
+// endpoint filters by created_after/created_before, so we bucket by day with one paged sweep per day.
+// MQL/therapy/clinical metrics are intentionally left EMPTY (that data isn't exposed on the lead).
+const FRAPPE_BASE = (process.env.FRAPPE_BASE_URL || 'https://api.mytatva.in').replace(/\/+$/,'');
+const FRAPPE_SECRET = process.env.FRAPPE_SECRET_KEY || '';
+const FRAPPE_ACCOUNT = process.env.FRAPPE_ACCOUNT || 'GoodFlip';
 // Frappe source values -> dashboard display keys (light normalization; unknowns pass through as-is).
-const FRAPPE_SRC_MAP = { 'fb lead ads':'FB Lead Ads','whatsapp marketing':'WhatsApp Marketing','partner api':'Partner API','tata 1mg':'TATA 1MG','affiliate':'Affiliate','instagram':'Instagram','webpage lead':'Webpage Lead','contact form 7':'Webpage Lead','self sourced':'Self Sourced','inbound phone call':'Inbound Phone Call','outbound phone call':'Outbound Phone Call','doc led gtm':'Doc Led GTM','customer referral':'Customer Referral','existing customer referral':'Customer Referral' };
+const FRAPPE_SRC_MAP = { 'fb lead ads':'FB Lead Ads','whatsapp marketing':'WhatsApp Marketing','partner api':'Partner API','tata 1mg':'TATA 1MG','tata1mg':'TATA 1MG','affiliate':'Affiliate','instagram':'Instagram','webpage lead':'Webpage Lead','contact form 7':'Webpage Lead','self sourced':'Self Sourced','inbound phone call':'Inbound Phone Call','outbound phone call':'Outbound Phone Call','doc led gtm':'Doc Led GTM','customer referral':'Customer Referral','existing customer referral':'Customer Referral' };
 function frappeSource(s){ const t=(s==null?'':String(s)).trim(); if(!t) return '(no source)'; return FRAPPE_SRC_MAP[t.toLowerCase()] || t; }
+// "Partner API" was a source-tagging bug for leads created ~Aug 21-26 (per TatvaCare eng); the true
+// source lives in custom_source_origin. Classify that origin string into a clean channel bucket.
+function frappeOriginBucket(origin){
+  const t=(origin==null?'':String(origin)).trim(); const o=t.toLowerCase(); if(!t) return null;
+  if(o.startsWith('ig |')||o.startsWith('ig|')||o.includes('instagram')) return 'Instagram';
+  if(o.startsWith('fb |')||o.startsWith('fb|')||o.startsWith('facebook form')||o.includes('facebook')) return 'FB Lead Ads';
+  if(o.includes('affiliate')) return 'Affiliate';
+  if(o.includes('tata1mg')||o.includes('tata 1mg')) return 'TATA 1MG';
+  if(o.includes('whatsapp')) return 'WhatsApp Marketing';
+  if(o.includes('niva bupa')||o.includes('visitstar')||o.includes('star insurance')||o.includes('insurance')) return t;
+  if(o.includes('webpage')||o.includes('landing page')||o.includes('link_in_bio')) return 'Webpage Lead';
+  return null;
+}
+function frappeLeadSource(source, origin){
+  const s=(source==null?'':String(source)).trim();
+  if(s && s.toLowerCase()!=='partner api') return frappeSource(s);   // trust the corrected source
+  return frappeOriginBucket(origin) || (s ? frappeSource(s) : '(no source)'); // fall back to origin for the mislabeled batch
+}
 // lead_owner is an email (e.g. shaqib.ahmad@...). Derive "First Last" and reconcile via canonCounsellor
 // so lead owners match the revenue-sheet counsellor names on the leaderboard.
 function frappeOwnerName(email){ if(!email) return null; const local=String(email).split('@')[0]; if(['administrator','guest','admin'].includes(local.toLowerCase())) return null; const nm=local.split(/[._-]+/).filter(Boolean).map(w=>w.charAt(0).toUpperCase()+w.slice(1)).join(' '); return canonCounsellor(nm); }
+function ymdPlus(ymd,n){ const p=String(ymd).split('-').map(Number); const t=new Date(Date.UTC(p[0],p[1]-1,p[2])); t.setUTCDate(t.getUTCDate()+n); return t.toISOString().slice(0,10); }
+// Page through a single calendar day [day .. day+1) and tally count / source / substage / owner.
+async function frappeDay(day){
+  const out={ count:0, src:{}, stage:{}, owner:{} };
+  const nd=ymdPlus(day,1); let offset=0;
+  for(let p=0;p<80;p++){
+    const qs=new URLSearchParams({ account:FRAPPE_ACCOUNT, limit:'200', offset:String(offset), created_after:day, created_before:nd });
+    const r=await fetch(FRAPPE_BASE+'/api/v8/frappe-partner/leads/list?'+qs.toString(), { headers:{ 'frappe-secret-key':FRAPPE_SECRET, 'isdecrypted':'1', 'Accept':'application/json' } });
+    if(!r.ok){ const t=await r.text().catch(()=> ''); throw new Error('Frappe '+r.status+' '+day+': '+t.slice(0,140)); }
+    const j=await r.json(); const m=(j&&j.data&&j.data.data)||{}; const leads=m.leads||[];
+    for(const L of leads){
+      out.count++;
+      const s=frappeLeadSource(L.source, L.custom_source_origin); out.src[s]=(out.src[s]||0)+1;
+      const st=(L.custom_substage==null?'':String(L.custom_substage).split('::').pop().trim()); if(st){ out.stage[st]=(out.stage[st]||0)+1; }
+      const nm=frappeOwnerName(L.lead_owner); if(nm){ out.owner[nm]=(out.owner[nm]||0)+1; }
+    }
+    if(!m.has_more || leads.length<200) break; offset+=200;
+  }
+  return out;
+}
 async function getFrappeLeads(){
-  if(!FRAPPE_KEY || !FRAPPE_SECRET) throw new Error('FRAPPE_API_KEY / FRAPPE_API_SECRET missing');
-  const since=daysAgo(MQL_DAYS), until=TODAY;
-  const fields=['creation','source','custom_source_origin','custom_stage','lead_owner'];
-  const filters=[['creation','>=',since+' 00:00:00'],['creation','<=',until+' 23:59:59'],['custom_vertical','=','Goodflip']];
-  const headers={ 'Authorization':'token '+FRAPPE_KEY+':'+FRAPPE_SECRET, 'Accept':'application/json' };
-  const PAGE=2000; let offset=0; const rows=[];
-  for(let i=0;i<300;i++){
-    const u=FRAPPE_BASE+'/api/method/frappe.client.get_list?doctype='+encodeURIComponent('CRM Lead')
-      +'&fields='+encodeURIComponent(JSON.stringify(fields))
-      +'&filters='+encodeURIComponent(JSON.stringify(filters))
-      +'&order_by='+encodeURIComponent('creation desc')
-      +'&limit_page_length='+PAGE+'&limit_start='+offset;
-    const r=await fetch(u,{headers});
-    if(!r.ok){ const t=await r.text().catch(()=> ''); throw new Error('Frappe '+r.status+': '+t.slice(0,200)); }
-    const j=await r.json(); const batch=j.message||[]; rows.push(...batch);
-    if(batch.length<PAGE) break; offset+=PAGE;
-  }
+  if(!FRAPPE_SECRET) throw new Error('FRAPPE_SECRET_KEY missing');
+  const days = LIGHT ? 8 : 62;                 // light run refreshes recent days; full run the whole window
+  const until=TODAY, since=daysAgo(days);
   const lsqAllDaily={}, lsqSourceDaily={}, lsqStageDaily={}, counsellorLeadsDaily={};
-  for(const rec of rows){
-    const co=(rec.creation||'').slice(0,10); if(!co||co<since||co>until)continue;
-    lsqAllDaily[co]=(lsqAllDaily[co]||0)+1;
-    const src=frappeSource(rec.source); (lsqSourceDaily[co]=lsqSourceDaily[co]||{}); lsqSourceDaily[co][src]=(lsqSourceDaily[co][src]||0)+1;
-    const nm=frappeOwnerName(rec.lead_owner); if(nm){ (counsellorLeadsDaily[co]=counsellorLeadsDaily[co]||{}); counsellorLeadsDaily[co][nm]=(counsellorLeadsDaily[co][nm]||0)+1; }
-    const stg=(rec.custom_stage==null?'':String(rec.custom_stage).split('::').pop().trim()); if(stg){ (lsqStageDaily[co]=lsqStageDaily[co]||{}); lsqStageDaily[co][stg]=(lsqStageDaily[co][stg]||0)+1; }
+  let pulled=0;
+  for(let d=since; d<=until; d=ymdPlus(d,1)){
+    const r=await frappeDay(d);
+    if(r.count>0){ lsqAllDaily[d]=r.count; lsqSourceDaily[d]=r.src; lsqStageDaily[d]=r.stage; counsellorLeadsDaily[d]=r.owner; pulled+=r.count; }
   }
-  return { lsqAllDaily, lsqSourceDaily, lsqStageDaily, counsellorLeadsDaily, mqlDaily:{}, glpYesDaily:{}, mqlCityDaily:{}, mqlAgeDaily:{}, pulled:rows.length, window:{since,until} };
+  return { lsqAllDaily, lsqSourceDaily, lsqStageDaily, counsellorLeadsDaily, mqlDaily:{}, glpYesDaily:{}, mqlCityDaily:{}, mqlAgeDaily:{}, pulled, window:{since,until} };
 }
 async function getMQL(){
   const host=process.env.LSQ_HOST, ak=process.env.LSQ_ACCESS_KEY, sk=process.env.LSQ_SECRET_KEY;
@@ -260,23 +279,14 @@ async function getMQL(){
   const since=daysAgo(MQL_DAYS), until=TODAY;
   const base=`https://${host}/v2/LeadManagement.svc/Leads.RecentlyModified?accessKey=${encodeURIComponent(ak)}&secretKey=${encodeURIComponent(sk)}`;
   const seen={};
-  const _sleep=(ms)=>new Promise(res=>setTimeout(res,ms)); // LSQ burst limit is 10 calls / 5s; pace paging to stay under it.
   for(let page=1; page<=60; page++){
     const body={ Parameter:{FromDate:since+' 00:00:00',ToDate:until+' 23:59:59'}, Columns:{Include_CSV:LSQ_FIELDS.join(',')}, Sorting:{ColumnName:'CreatedOn',Direction:'1'}, Paging:{PageIndex:page,PageSize:1000} };
-    let r, tries=0;
-    while(true){
-      r=await fetch(base,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-      if(r.ok)break;
-      const t=await r.text();
-      // LSQ 429 (MXAPIRateLimitExceededException) is transient: back off and retry rather than failing the whole pull.
-      if((r.status===429||/RateLimit/i.test(t)) && tries<6){ tries++; await _sleep(6000*tries); continue; }
-      throw new Error(`LSQ ${r.status}: ${t.slice(0,300)}`);
-    }
+    const r=await fetch(base,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(!r.ok){ const t=await r.text(); throw new Error(`LSQ ${r.status}: ${t.slice(0,300)}`); }
     const j=await r.json(); const leads=j.Leads||j.RecentlyModifiedLeads||(Array.isArray(j)?j:[])||[];
     if(!leads.length)break;
     for(const raw of leads){ const rec=flatten(raw); if(rec.ProspectID&&!seen[rec.ProspectID])seen[rec.ProspectID]=rec; }
     if(leads.length<1000)break;
-    await _sleep(700); // ~1.4 calls/sec: comfortably under LSQ's 10-per-5s ceiling
   }
   const mqlDaily={}, lsqAllDaily={}, lsqStageDaily={}, lsqSourceDaily={}, glpYesDaily={}, mqlCityDaily={}, mqlAgeDaily={}, counsellorLeadsDaily={};
   for(const rec of Object.values(seen)){
@@ -284,8 +294,8 @@ async function getMQL(){
     lsqAllDaily[co]=(lsqAllDaily[co]||0)+1; { const _cn=canonCounsellor(rec.OwnerIdName); if(_cn){ (counsellorLeadsDaily[co]=counsellorLeadsDaily[co]||{}); counsellorLeadsDaily[co][_cn]=(counsellorLeadsDaily[co][_cn]||0)+1; } } const srcL=(rec.Source||'').trim().toLowerCase(); let srcKey=canonSource(rec.Source); const us=(rec.mx_user_source||'').toLowerCase(); if(!srcKey){ srcKey = us.includes('glp') ? 'GLP (no source)' : '(no source)'; } (lsqSourceDaily[co]=lsqSourceDaily[co]||{}); lsqSourceDaily[co][srcKey]=(lsqSourceDaily[co][srcKey]||0)+1;
       if(srcL==='fb lead ads'){ const glpA=(rec.mx_are_you_open_to_a_medically_supervised_GLP_program||'').toLowerCase(); const glpTh=lsqTherapy(rec.mx_utm_disease); if(glpA.includes('yes')&&(glpTh==='Diabetes'||glpTh==='Obesity')){ glpYesDaily[co]=(glpYesDaily[co]||0)+1; } }
     const sc=scoreLead(rec); if(!sc)continue;
-    if(srcL==='fb lead ads'){ (mqlDaily[co]=mqlDaily[co]||{}); (mqlDaily[co][sc.therapy]=mqlDaily[co][sc.therapy]||{t:0,pa:0,ro:0,rv:0,fl:0,r:{age:0,city:0,pay:0,payBlank:0,clin:0,clinBlank:0}});
-    const c=mqlDaily[co][sc.therapy]; if(!c.r)c.r={age:0,city:0,pay:0,payBlank:0,clin:0,clinBlank:0}; c.t++; c[sc.verdict]++; { const R=sc.rs; if(R.age)c.r.age++; if(R.city)c.r.city++; if(R.pay)c.r.pay++; if(R.payBlank)c.r.payBlank++; if(R.clin)c.r.clin++; if(R.clinBlank)c.r.clinBlank++; } if(sc.verdict==='pa'||sc.verdict==='ro'){ const cty=(rec.mx_City||'').trim()||'(blank)', ag=(rec.mx_Age_Group||'').trim()||'(blank)'; (mqlCityDaily[co]=mqlCityDaily[co]||{}); mqlCityDaily[co][cty]=(mqlCityDaily[co][cty]||0)+1; (mqlAgeDaily[co]=mqlAgeDaily[co]||{}); mqlAgeDaily[co][ag]=(mqlAgeDaily[co][ag]||0)+1; } }
+    if(srcL==='fb lead ads'){ (mqlDaily[co]=mqlDaily[co]||{}); (mqlDaily[co][sc.therapy]=mqlDaily[co][sc.therapy]||{t:0,pa:0,ro:0,rv:0,fl:0});
+    const c=mqlDaily[co][sc.therapy]; c.t++; c[sc.verdict]++; if(sc.verdict==='pa'||sc.verdict==='ro'){ const cty=(rec.mx_City||'').trim()||'(blank)', ag=(rec.mx_Age_Group||'').trim()||'(blank)'; (mqlCityDaily[co]=mqlCityDaily[co]||{}); mqlCityDaily[co][cty]=(mqlCityDaily[co][cty]||0)+1; (mqlAgeDaily[co]=mqlAgeDaily[co]||{}); mqlAgeDaily[co][ag]=(mqlAgeDaily[co][ag]||0)+1; } }
     const stg=normalizeStage(rec.ProspectStage);
     if(stg){ (lsqStageDaily[co]=lsqStageDaily[co]||{}); (lsqStageDaily[co][sc.therapy]=lsqStageDaily[co][sc.therapy]||{}); lsqStageDaily[co][sc.therapy][stg]=(lsqStageDaily[co][sc.therapy][stg]||0)+1; }
   }
@@ -532,6 +542,35 @@ async function getProgramRevenue() {
   return { programRevenueDaily: daily, programSalesDaily: sales, counsellorSalesDaily: csales, info: { rowsKept, dupes, tabsUsed, tabsSkipped, tabsDegraded, unattributed: unattr, window: { since: cut, until: TODAY } } };
 }
 
+// ---------- Renewed care-plan revenue (Renewal & Referral sheet) ----------
+// Turn a SharePoint share link (…/:x:/g/personal/<user>/<token>…) into an anonymous xlsx download URL.
+function toSpDownload(u){ const m=String(u||'').match(/^(https?:\/\/[^/]+)\/:[a-z]:\/[a-z]\/(personal\/[^/]+)\/([^/?#]+)/i); return m ? `${m[1]}/${m[2]}/_layouts/15/download.aspx?share=${m[3]}` : String(u||''); }
+async function getRenewalRevenue(){
+  if(!RENEWAL_URL) throw new Error('RENEWAL_XLSX_URL secret not set');
+  const XLSX = await import('xlsx');
+  const base = toSpDownload(RENEWAL_URL);
+  const url = base + (base.includes('?') ? '&' : '?') + 'nocache=' + Date.now();
+  const r = await fetch(url, { cache:'no-store', headers:{ 'User-Agent':'adradar-refresh', 'Cache-Control':'no-cache', 'Pragma':'no-cache' } });
+  if(!r.ok){ const t=await r.text().catch(()=> ''); throw new Error(`renewal SharePoint ${r.status}: ${t.slice(0,120)}`); }
+  if(((r.headers.get('content-type')||'').toLowerCase()).includes('text/html')) throw new Error('renewal: got HTML not xlsx (share link likely not anonymous / login required)');
+  const wb = XLSX.read(Buffer.from(await r.arrayBuffer()), { cellDates:false });
+  const MABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const ym = TODAY.slice(0,7); const mo = MABBR[parseInt(TODAY.slice(5,7),10)-1];
+  const sheetName = wb.SheetNames.find(n=>n.trim().toLowerCase()===mo.toLowerCase()) || wb.SheetNames.find(n=>n.trim().toLowerCase().startsWith(mo.toLowerCase()));
+  if(!sheetName) throw new Error('renewal: no sheet for month '+mo+' (have: '+wb.SheetNames.join(',')+')');
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header:1, raw:true, defval:null });
+  const hdr = (rows[0]||[]).map(h=> h==null?'':h.toString().trim());
+  const norm = s => s.toLowerCase().replace(/[^a-z0-9]/g,'');
+  const payI = hdr.findIndex(h=> norm(h).includes('paymentamount'));
+  const planI = hdr.findIndex(h=> norm(h).includes('renewd') || norm(h).includes('renewed'));
+  const nutI = hdr.findIndex(h=> norm(h).includes('nutraceutical') || norm(h).includes('nutra'));
+  const devI = hdr.findIndex(h=> norm(h)==='devices' || norm(h).includes('device'));
+  if(payI<0 || planI<0) throw new Error('renewal: missing Payment Amount / Renewd Plan header on sheet '+sheetName);
+  let achieved=0, count=0, dnAchieved=0, dnCount=0;
+  for(let i=1;i<rows.length;i++){ const row=rows[i]; if(!row) continue; const amt=parseFloat(row[payI]); if(!isFinite(amt)) continue; const plan=(row[planI]==null?'':row[planI].toString().trim()); if(plan){ achieved+=amt; count++; } const _dn=((nutI>=0&&row[nutI]!=null&&row[nutI].toString().trim()!=='')||(devI>=0&&row[devI]!=null&&row[devI].toString().trim()!=='')); if(_dn){ dnAchieved+=amt; dnCount++; } }
+  return { achieved: Math.round(achieved), count, month: mo, ym, sheet: sheetName, target: RENEWAL_TARGETS[ym]||0, achievedDN: Math.round(dnAchieved), countDN: dnCount, targetDN: RENEWAL_DN_TARGETS[ym]||0, asOf: new Date().toISOString() };
+}
+
 // ---------- main ----------
 // Public-repo build: prior state comes from the Blob feed (data.json is never committed here, so
 // no revenue/lead data is exposed). Loading prev from Blob also lets the frequent light runs
@@ -558,7 +597,6 @@ if (!Object.keys(prev).length) {
     else console.log('[prev] Blob returned ' + _pr.status + ' - starting empty');
   } catch (e) { console.log('[prev] Blob load failed (starting empty):', e.message); }
 }
-
 // Two-speed refresh. REFRESH_MODE=light refreshes only the fast, frequently-changing sources
 // (LeadSquared, Shopify, Program Revenue) and PRESERVES the slow/periodic ones (Meta Graph and
 // GoKwik) from the previous data.json. A light run finishes in ~1 min, so an external cron can
@@ -580,7 +618,7 @@ const token=process.env.META_ACCESS_TOKEN;
 async function run(name, fn, apply){ try{ const r=await fn(); apply(r); out.meta.sources[name]='ok'; console.log('['+name+'] ok'); }catch(e){ out.meta.sources[name]='error: '+e.message; console.error('['+name+'] FAILED:', e.message); } }
 
 if(!LIGHT) await run('performance', ()=>{ if(!token)throw new Error('META_ACCESS_TOKEN missing'); return getPerformance(token); },
-    r=>{ const bad=Object.values(r.accountStatus||{}).filter(v=>!String(v).startsWith('ok'));
+  r=>{ const bad=Object.values(r.accountStatus||{}).filter(v=>!String(v).startsWith('ok'));
       if(bad.length){ console.log('[performance] PARTIAL - '+bad.length+' account(s) failed; keeping previous dailyCreatives');
         out.meta.spendStale=true; out.meta.spendAsOfRun=(prev.meta&&prev.meta.lastRun)||null; }
       else { Object.assign(out.dailyCreatives, r.dailyCreatives); out.meta.spendStale=false; out.meta.spendAsOfRun=null; }
@@ -622,39 +660,6 @@ if(!LIGHT) await run('gokwik', getGokwik, r=>{
   for(const k of Object.keys(out.gokwikAbandonedDaily)) if(k<cut) delete out.gokwikAbandonedDaily[k];
 });
 
-// ---------- Renewed care-plan revenue (Renewal & Referral sheet) ----------
-// Turn a SharePoint share link (…/:x:/g/personal/<user>/<token>…) into an anonymous xlsx download URL.
-function toSpDownload(u){ const m=String(u||'').match(/^(https?:\/\/[^/]+)\/:[a-z]:\/[a-z]\/(personal\/[^/]+)\/([^/?#]+)/i); return m ? `${m[1]}/${m[2]}/_layouts/15/download.aspx?share=${m[3]}` : String(u||''); }
-async function getRenewalRevenue(){
-  if(!RENEWAL_URL) throw new Error('RENEWAL_XLSX_URL secret not set');
-  const XLSX = await import('xlsx');
-  const base = toSpDownload(RENEWAL_URL);
-  const url = base + (base.includes('?') ? '&' : '?') + 'nocache=' + Date.now();
-  const r = await fetch(url, { cache:'no-store', headers:{ 'User-Agent':'adradar-refresh', 'Cache-Control':'no-cache', 'Pragma':'no-cache' } });
-  if(!r.ok){ const t=await r.text().catch(()=> ''); throw new Error(`renewal SharePoint ${r.status}: ${t.slice(0,120)}`); }
-  if(((r.headers.get('content-type')||'').toLowerCase()).includes('text/html')) throw new Error('renewal: got HTML not xlsx (share link likely not anonymous / login required)');
-  const wb = XLSX.read(Buffer.from(await r.arrayBuffer()), { cellDates:false });
-  const MABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const ym = TODAY.slice(0,7); const mo = MABBR[parseInt(TODAY.slice(5,7),10)-1];
-  const sheetName = wb.SheetNames.find(n=>n.trim().toLowerCase()===mo.toLowerCase()) || wb.SheetNames.find(n=>n.trim().toLowerCase().startsWith(mo.toLowerCase()));
-  if(!sheetName) throw new Error('renewal: no sheet for month '+mo+' (have: '+wb.SheetNames.join(',')+')');
-  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header:1, raw:true, defval:null });
-  const hdr = (rows[0]||[]).map(h=> h==null?'':h.toString().trim());
-  const norm = s => s.toLowerCase().replace(/[^a-z0-9]/g,'');
-  const payI = hdr.findIndex(h=> norm(h).includes('paymentamount'));
-  const planI = hdr.findIndex(h=> norm(h).includes('renewd') || norm(h).includes('renewed'));
-  const nutI = hdr.findIndex(h=> norm(h).includes('nutraceutical') || norm(h).includes('nutra'));
-  const devI = hdr.findIndex(h=> norm(h)==='devices' || norm(h).includes('device'));
-  if(payI<0 || planI<0) throw new Error('renewal: missing Payment Amount / Renewd Plan header on sheet '+sheetName);
-  let achieved=0, count=0, dnAchieved=0, dnCount=0;
-  for(let i=1;i<rows.length;i++){ const row=rows[i]; if(!row) continue; const amt=parseFloat(row[payI]); if(!isFinite(amt)) continue; const plan=(row[planI]==null?'':row[planI].toString().trim()); if(plan){ achieved+=amt; count++; } const _dn=((nutI>=0&&row[nutI]!=null&&row[nutI].toString().trim()!=='')||(devI>=0&&row[devI]!=null&&row[devI].toString().trim()!=='')); if(_dn){ dnAchieved+=amt; dnCount++; } }
-  return { achieved: Math.round(achieved), count, month: mo, ym, sheet: sheetName, target: RENEWAL_TARGETS[ym]||0, achievedDN: Math.round(dnAchieved), countDN: dnCount, targetDN: RENEWAL_DN_TARGETS[ym]||0, asOf: new Date().toISOString() };
-}
-
-// Renewed care-plan revenue vs monthly target (auto-pulled from the Renewal & Referral sheet). Fail-soft: a bad
-// fetch keeps the previous meta.renewal instead of blanking the tracker.
-await run('renewal', getRenewalRevenue, r=>{ out.meta.renewal = r; });
-
 await run('programRevenue', getProgramRevenue, r=>{
   // MERGE by date like GoKwik: each run recomputes the full 120-day window from the
   // authoritative sheet and replaces those days; days outside the window are preserved
@@ -670,6 +675,10 @@ await run('programRevenue', getProgramRevenue, r=>{
   for(const k of Object.keys(out.counsellorSalesDaily||{})) if(k<cut) delete out.counsellorSalesDaily[k];
   for(const k of Object.keys(out.counsellorLeadsDaily||{})) if(k<cut) delete out.counsellorLeadsDaily[k];
 });
+
+// Renewed care-plan revenue vs monthly target (auto-pulled from the Renewal & Referral sheet). Fail-soft: a bad
+// fetch keeps the previous meta.renewal instead of blanking the tracker.
+await run('renewal', getRenewalRevenue, r=>{ out.meta.renewal = r; });
 
 const dates=Object.keys(out.dailyCreatives).sort();
 out.meta.dateRange={ min:dates[0]||'', max:dates[dates.length-1]||'' };
