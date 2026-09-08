@@ -255,7 +255,7 @@ async function frappeDay(day){
       out.count++;
       const s=frappeLeadSource(L.source, L.custom_source_origin); out.src[s]=(out.src[s]||0)+1;
       const st=(L.custom_substage==null?'':String(L.custom_substage).split('::').pop().trim()); if(st){ out.stage[st]=(out.stage[st]||0)+1; }
-      const nm=frappeOwnerName(L.lead_owner); if(nm){ out.owner[nm]=(out.owner[nm]||0)+1; }
+      const nm=canonCounsellor(frappeOwnerName(L.lead_owner)); if(nm){ out.owner[nm]=(out.owner[nm]||0)+1; }
     }
     if(!m.has_more || leads.length<200) break; offset+=200;
   }
