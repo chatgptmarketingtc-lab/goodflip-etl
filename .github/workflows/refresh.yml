@@ -2,7 +2,7 @@ name: GoodFlip feed refresh
 
 on:
   schedule:
-    - cron: '*/5 * * * *'
+    - cron: '*/15 * * * *'   # light run: fast sources (Frappe, Shopify, Program Revenue)
     - cron: '17 * * * *'
   workflow_dispatch:
     inputs:
