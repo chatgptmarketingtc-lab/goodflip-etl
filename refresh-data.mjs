@@ -1,7 +1,7 @@
 // scripts/refresh-data.mjs
 // Runs in GitHub Actions (hourly) - NO 10s limit. Replaces Coupler.
 // Pulls Meta Graph (both ad accounts) + LeadSquared (leads + MQL) +
-// Shopify (orders net), and writes data.json at the repo root. Vercel
+// Shopify (orders net), and writes data.jhson at the repo root. Vercel
 // serves that file statically; the dashboard reads it instantly.
 //
 // Resilient: each source is independent. If one fails, the previous
@@ -216,7 +216,7 @@ function scoreLead(rec){ const t=lsqTherapy(rec.mx_utm_disease); if(!t)return nu
 // MQL/therapy/clinical metrics are intentionally left EMPTY (that data isn't exposed on the lead).
 const FRAPPE_BASE = (process.env.FRAPPE_BASE_URL || 'https://api.mytatva.in').replace(/\/+$/,'');
 const FRAPPE_SECRET = process.env.FRAPPE_SECRET_KEY || '';
-const FRAPPE_ACCOUNT = process.env.FRAPPE_ACCOUNT || 'GoodFlip';
+const FRAPPE_ACCOUNT = process.env.FRAPPE_ACCOUNT || 'GoodFlip'; const FRAPPE_MIN_GAP_MS = Number(process.env.FRAPPE_MIN_GAP_MS || 5000); let _frappeLast = 0; const _frappeSleep = ms => new Promise(r=>setTimeout(r, ms)); async function frappeGate(){ const wait = _frappeLast + FRAPPE_MIN_GAP_MS - Date.now(); if(wait>0) await _frappeSleep(wait); _frappeLast = Date.now(); }
 // Frappe source values -> dashboard display keys (light normalization; unknowns pass through as-is).
 const FRAPPE_SRC_MAP = { 'fb lead ads':'FB Lead Ads','whatsapp marketing':'WhatsApp Marketing','partner api':'Partner API','tata 1mg':'TATA 1MG','tata1mg':'TATA 1MG','affiliate':'Affiliate','instagram':'Instagram','webpage lead':'Webpage Lead','contact form 7':'Webpage Lead','self sourced':'Self Sourced','inbound phone call':'Inbound Phone Call','outbound phone call':'Outbound Phone Call','doc led gtm':'Doc Led GTM','customer referral':'Customer Referral','existing customer referral':'Customer Referral' };
 function frappeSource(s){ const t=(s==null?'':String(s)).trim(); if(!t) return '(no source)'; return FRAPPE_SRC_MAP[t.toLowerCase()] || t; }
@@ -248,7 +248,7 @@ async function frappeDay(day){
   const nd=ymdPlus(day,1); let offset=0;
   for(let p=0;p<80;p++){
     const qs=new URLSearchParams({ account:FRAPPE_ACCOUNT, limit:'200', offset:String(offset), created_after:day, created_before:nd });
-    const r=await fetch(FRAPPE_BASE+'/api/v8/frappe-partner/leads/list?'+qs.toString(), { headers:{ 'frappe-secret-key':FRAPPE_SECRET, 'isdecrypted':'1', 'Accept':'application/json' } });
+    await frappeGate(); const r=await fetch(FRAPPE_BASE+'/api/v8/frappe-partner/leads/list?'+qs.toString(), { headers:{ 'frappe-secret-key':FRAPPE_SECRET, 'isdecrypted':'1', 'Accept':'application/json' } });
     if(!r.ok){ const t=await r.text().catch(()=> ''); throw new Error('Frappe '+r.status+' '+day+': '+t.slice(0,140)); }
     const j=await r.json(); const m=(j&&j.data&&j.data.data)||{}; const leads=m.leads||[];
     for(const L of leads){
@@ -263,7 +263,7 @@ async function frappeDay(day){
 }
 async function getFrappeLeads(){
   if(!FRAPPE_SECRET) throw new Error('FRAPPE_SECRET_KEY missing');
-  const days = LIGHT ? 8 : 62;                 // light run refreshes recent days; full run the whole window
+  const days = LIGHT ? 8 : 31;                 // light run refreshes recent days; full run the whole window
   const until=TODAY, since=daysAgo(days);
   const lsqAllDaily={}, lsqSourceDaily={}, lsqStageDaily={}, counsellorLeadsDaily={};
   let pulled=0;
