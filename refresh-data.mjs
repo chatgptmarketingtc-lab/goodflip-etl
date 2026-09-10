@@ -268,7 +268,7 @@ async function getFrappeLeads(){
   const lsqAllDaily={}, lsqSourceDaily={}, lsqStageDaily={}, counsellorLeadsDaily={};
   let pulled=0;
   for(let d=since; d<=until; d=ymdPlus(d,1)){
-    let r; try{ r=await frappeDay(d); }catch(e){ continue; }
+    let r=null; for(let a=0;a<3;a++){ try{ r=await frappeDay(d); break; }catch(e){ if(a<2) await _frappeSleep(20000); else console.log('[frappe] skipped '+d+': '+e.message); } } if(!r) continue;
     if(r.count>0){ lsqAllDaily[d]=r.count; lsqSourceDaily[d]=r.src; lsqStageDaily[d]=r.stage; counsellorLeadsDaily[d]=r.owner; pulled+=r.count; }
   }
   return { lsqAllDaily, lsqSourceDaily, lsqStageDaily, counsellorLeadsDaily, mqlDaily:{}, glpYesDaily:{}, mqlCityDaily:{}, mqlAgeDaily:{}, pulled, window:{since,until} };
