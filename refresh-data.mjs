@@ -230,12 +230,13 @@ function frappeOriginBucket(origin){
   if(o.includes('tata1mg')||o.includes('tata 1mg')) return 'TATA 1MG';
   if(o.includes('whatsapp')) return 'WhatsApp Marketing';
   if(o.includes('niva bupa')||o.includes('visitstar')||o.includes('star insurance')||o.includes('insurance')) return t;
+  if(o.includes('glp')&&o.includes('landing')) return 'GLP Landing Page';
   if(o.includes('webpage')||o.includes('landing page')||o.includes('link_in_bio')) return 'Webpage Lead';
   return null;
 }
 function frappeLeadSource(source, origin){
   const s=(source==null?'':String(source)).trim();
-  if(s && s.toLowerCase()!=='partner api') return frappeSource(s);   // trust the corrected source
+  if(s && s.toLowerCase()!=='partner api' && s.toLowerCase()!=='goodflip') return frappeSource(s);   // trust corrected source; 'partner api' & 'goodflip' are ambiguous tags -> use origin
   return frappeOriginBucket(origin) || (s ? frappeSource(s) : '(no source)'); // fall back to origin for the mislabeled batch
 }
 // lead_owner is an email (e.g. shaqib.ahmad@...). Derive "First Last" and reconcile via canonCounsellor
