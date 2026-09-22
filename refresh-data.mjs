@@ -713,7 +713,7 @@ if(!LIGHT) try{
   console.log('[spend-backfill] filled '+filled+' historical day(s)');
 }catch(e){ console.log('[spend-backfill] skipped: '+e.message); }
 await run('frappeLeads', getFrappeLeads, r=>{ for(const k of ['lsqAllDaily','lsqStageDaily','lsqSourceDaily','counsellorLeadsDaily']){ if(r[k]) Object.assign(out[k]=out[k]||{}, r[k]); } out.meta.leadsPulled=r.pulled; out.meta.leadSource='frappe'; });
-  if(!LIGHT) await run('insightsMQL', getInsightsMQL, r=>{ out.mqlDaily=r.mqlDaily; out.mqlCityDaily=r.mqlCityDaily; out.mqlAgeDaily=r.mqlAgeDaily; out.meta.insightsScored=r.scored; out.meta.insightsPulled=r.pulled; });
+  await run('insightsMQL', getInsightsMQL, r=>{ out.mqlDaily=r.mqlDaily; out.mqlCityDaily=r.mqlCityDaily; out.mqlAgeDaily=r.mqlAgeDaily; out.meta.insightsScored=r.scored; out.meta.insightsPulled=r.pulled; });
 await run('shopify', getShopify, r=>{ out.shopifyDaily=r.shopifyDaily; out.meta.shopifyOrders=r.orders; });
 if(!LIGHT) await run('gokwik', getGokwik, r=>{
   // MERGE by date (not replace): each daily report updates the days it carries and
@@ -752,6 +752,7 @@ out.meta.dateRange={ min:dates[0]||'', max:dates[dates.length-1]||'' };
 // Keep the dashboard's current day (perfWindow.until) advancing every run in IST, even on light runs.
 out.meta.perfWindow = Object.assign({ since: daysAgo(PERF_DAYS) }, out.meta.perfWindow || {}, { until: TODAY });
 writeFileSync('data.json', JSON.stringify(out));
+delete out.meta.sources.mql; // drop stale legacy LSQ 'mql' key carried from prev feed
 console.log('Wrote data.json ['+(out.meta.mode||'full')+'] | perf dates:', dates.length, '| sources:', JSON.stringify(out.meta.sources));
 // Publish the canonical feed to Vercel Blob - the neutral store BOTH dashboards read as
 // peers (scorecard + Meta dashboard). data.json is already written above and still gets
