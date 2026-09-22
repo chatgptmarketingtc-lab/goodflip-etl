@@ -572,6 +572,71 @@ async function getRenewalRevenue(){
   return { achieved: Math.round(achieved), count, month: mo, ym, sheet: sheetName, target: RENEWAL_TARGETS[ym]||0, achievedDN: Math.round(dnAchieved), countDN: dnCount, targetDN: RENEWAL_DN_TARGETS[ym]||0, asOf: new Date().toISOString() };
 }
 
+// ---------- MQL / disease from Frappe Insights (Inside Sales Lead Extract) ----------
+// LeadSquared is dead; disease + screening data now comes from the Insights query
+// `gfx-extract` (workbook 11) on one.tatvacare.in, pulled with a Frappe API key. Produces the
+// SAME mqlDaily / mqlCityDaily / mqlAgeDaily the dashboard already reads, so the Therapy tab and
+// MQL numbers come back live. Read-only; no PII is written to the feed (counts only).
+const INSIGHTS_URL = (process.env.FRAPPE_INSIGHTS_URL || 'https://one.tatvacare.in').replace(/\/+$/,'');
+const INSIGHTS_KEY = process.env.FRAPPE_API_KEY || '';
+const INSIGHTS_SECRET = process.env.FRAPPE_API_SECRET || '';
+const INSIGHTS_QUERY = process.env.INSIGHTS_QUERY_NAME || 'cj91cvlks2';
+async function insPost(method, body){
+  const r = await fetch(`${INSIGHTS_URL}/api/method/${method}`, { method:'POST',
+    headers:{ Authorization:`token ${INSIGHTS_KEY}:${INSIGHTS_SECRET}`, 'Content-Type':'application/json', Accept:'application/json' },
+    body: JSON.stringify(body||{}) });
+  if(!r.ok){ const t=await r.text().catch(()=> ''); throw new Error('Insights '+method+' '+r.status+': '+t.slice(0,140)); }
+  const j = await r.json(); return j.message;
+}
+async function getInsightsMQL(){
+  if(!INSIGHTS_KEY || !INSIGHTS_SECRET) throw new Error('FRAPPE_API_KEY / FRAPPE_API_SECRET missing');
+  const doc = await insPost('insights.api.get_doc', { doctype:'Insights Query v3', name: INSIGHTS_QUERY });
+  if(!doc) throw new Error('Insights query '+INSIGHTS_QUERY+' not found');
+  const PAGE = 20000; let page = 1, all = [], ci = {};
+  for(let i=0;i<20;i++){
+    const m = await insPost('insights.api.run_doc_method', { method:'execute', docs:doc, args:{ page, page_size:PAGE, force: (page===1) } });
+    if(!m || !m.columns) throw new Error('Insights execute returned no columns');
+    if(page===1){ (m.columns||[]).forEach((c,idx)=>{ if(c && c.name!=null) ci[c.name]=idx; if(c && c.label!=null) ci[c.label]=idx; if(c && c.dimension_name!=null) ci[c.dimension_name]=idx; }); }
+    const rows = m.rows || [];
+    for(const row of rows) all.push(row);
+    const total = +m.total_row_count || 0;
+    if(rows.length < PAGE || (total && all.length >= total)) break;
+    page++;
+  }
+  function pick(row, cands){
+    if(Array.isArray(row)){ for(const c of cands){ if(ci[c]!=null){ const v=row[ci[c]]; if(v!=null) return v; } } return ''; }
+    for(const c of cands){ if(row[c]!=null) return row[c]; } return '';
+  }
+  const since = daysAgo(MQL_DAYS), until = TODAY;
+  const mqlDaily={}, mqlCityDaily={}, mqlAgeDaily={};
+  let scored=0, inWindow=0;
+  for(const row of all){
+    const co = istDate(pick(row,['created_on','Created On']));
+    if(!co || co<since || co>until) continue;
+    inWindow++;
+    const rec = {
+      mx_utm_disease: pick(row,['utm_disease','UTM Disease']),
+      mx_Age_Group: pick(row,['age_group','Age Group']),
+      mx_City: pick(row,['city','City']),
+      mx_Do_you_remember_your_HbA1c_levels: pick(row,['hba1c_raw','HbA1c (as answered)']),
+      mx_Are_you_open_to_investing_in_this_paid_program_of: pick(row,['investment_intent','Investment Intent']),
+      mx_Is_your_weight_or_BMI_higher_than_recommended: pick(row,['bmi_value','BMI'])
+    };
+    const sc = scoreLead(rec); if(!sc) continue;
+    scored++;
+    (mqlDaily[co] = mqlDaily[co] || {});
+    const c = mqlDaily[co][sc.therapy] = mqlDaily[co][sc.therapy] || {t:0,pa:0,ro:0,rv:0,fl:0};
+    c.t++; c[sc.verdict]++;
+    if(sc.verdict==='pa' || sc.verdict==='ro'){
+      const cty=(pick(row,['city','City'])||'').toString().trim()||'(blank)';
+      const ag=(pick(row,['age_group','Age Group'])||'').toString().trim()||'(blank)';
+      (mqlCityDaily[co]=mqlCityDaily[co]||{}); mqlCityDaily[co][cty]=(mqlCityDaily[co][cty]||0)+1;
+      (mqlAgeDaily[co]=mqlAgeDaily[co]||{}); mqlAgeDaily[co][ag]=(mqlAgeDaily[co][ag]||0)+1;
+    }
+  }
+  return { mqlDaily, mqlCityDaily, mqlAgeDaily, pulled: all.length, inWindow, scored, window:{since,until} };
+}
+
 // ---------- main ----------
 // Public-repo build: prior state comes from the Blob feed (data.json is never committed here, so
 // no revenue/lead data is exposed). Loading prev from Blob also lets the frequent light runs
@@ -648,6 +713,7 @@ if(!LIGHT) try{
   console.log('[spend-backfill] filled '+filled+' historical day(s)');
 }catch(e){ console.log('[spend-backfill] skipped: '+e.message); }
 await run('frappeLeads', getFrappeLeads, r=>{ for(const k of ['lsqAllDaily','lsqStageDaily','lsqSourceDaily','counsellorLeadsDaily']){ if(r[k]) Object.assign(out[k]=out[k]||{}, r[k]); } out.meta.leadsPulled=r.pulled; out.meta.leadSource='frappe'; });
+  if(!LIGHT) await run('insightsMQL', getInsightsMQL, r=>{ out.mqlDaily=r.mqlDaily; out.mqlCityDaily=r.mqlCityDaily; out.mqlAgeDaily=r.mqlAgeDaily; out.meta.insightsScored=r.scored; out.meta.insightsPulled=r.pulled; });
 await run('shopify', getShopify, r=>{ out.shopifyDaily=r.shopifyDaily; out.meta.shopifyOrders=r.orders; });
 if(!LIGHT) await run('gokwik', getGokwik, r=>{
   // MERGE by date (not replace): each daily report updates the days it carries and
