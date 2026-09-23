@@ -577,9 +577,9 @@ async function getRenewalRevenue(){
 // `gfx-extract` (workbook 11) on one.tatvacare.in, pulled with a Frappe API key. Produces the
 // SAME mqlDaily / mqlCityDaily / mqlAgeDaily the dashboard already reads, so the Therapy tab and
 // MQL numbers come back live. Read-only; no PII is written to the feed (counts only).
-const INSIGHTS_URL = (process.env.FRAPPE_INSIGHTS_URL || 'https://one.tatvacare.in').replace(/\/+$/,'');
-const INSIGHTS_KEY = process.env.FRAPPE_API_KEY || '';
-const INSIGHTS_SECRET = process.env.FRAPPE_API_SECRET || '';
+const INSIGHTS_URL = (process.env.FRAPPE_INSIGHTS_URL || 'https://one.tatvacare.in').trim().replace(/\/+$/,'');
+const INSIGHTS_KEY = (process.env.FRAPPE_API_KEY || '').trim();
+const INSIGHTS_SECRET = (process.env.FRAPPE_API_SECRET || '').trim();
 const INSIGHTS_QUERY = process.env.INSIGHTS_QUERY_NAME || 'cj91cvlks2';
 async function insPost(method, body){
   const r = await fetch(`${INSIGHTS_URL}/api/method/${method}`, { method:'POST',
