@@ -39,6 +39,9 @@ jobs:
           PROGRAM_REVENUE_XLSX_URL: ${{ secrets.PROGRAM_REVENUE_XLSX_URL }}
           RENEWAL_XLSX_URL: ${{ secrets.RENEWAL_XLSX_URL }}
           FRAPPE_SECRET_KEY: ${{ secrets.FRAPPE_SECRET_KEY }}
+          FRAPPE_API_KEY: ${{ secrets.FRAPPE_API_KEY }}
+          FRAPPE_API_SECRET: ${{ secrets.FRAPPE_API_SECRET }}
+          FRAPPE_INSIGHTS_URL: ${{ secrets.FRAPPE_INSIGHTS_URL }}
           FRAPPE_ACCOUNT: ${{ secrets.FRAPPE_ACCOUNT }}
           FRAPPE_BASE_URL: ${{ secrets.FRAPPE_BASE_URL }}
           BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
