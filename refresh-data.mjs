@@ -15,7 +15,7 @@
 import { readFileSync, writeFileSync } from 'fs';
 
 const GRAPH_VERSION = 'v23.0';
-const AD_ACCOUNTS = ['267120132089369', '1673404820349968', '988407777596025']; // TatvaCare, GoodFlip_GLP
+const AD_ACCOUNTS = ['267120132089369', '1673404820349968']; // TatvaCare, GoodFlip_GLP
 const EXCLUDE = ['tatva practice', 'tatvapractice', 'bihar abdm', 'lookalike dr data'];
 const PERF_DAYS = 45, MQL_DAYS = 60, SHOP_DAYS = 45;
 const PROGRAM_REV_DAYS = 240;
