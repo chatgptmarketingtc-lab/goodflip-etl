@@ -1,6 +1,6 @@
 // scripts/refresh-data.mjs
 // Runs in GitHub Actions (hourly) - NO 10s limit. Replaces Coupler.
-// Pulls Meta Graph (both ad accounts) + LeadSquared (leads + MQL) +
+// Pulls Meta Graph (all ad accounts) + Frappe CRM (leads) + Frappe Insights (MQL) +
 // Shopify (orders net), and writes data.jhson at the repo root. Vercel
 // serves that file statically; the dashboard reads it instantly.
 //
@@ -8,8 +8,8 @@
 // value for that source (from the existing data.json) is preserved so
 // a transient outage never blanks the dashboard.
 //
-// Env (GitHub repo Secrets): META_ACCESS_TOKEN, LSQ_HOST,
-//   LSQ_ACCESS_KEY, LSQ_SECRET_KEY, SHOPIFY_STORE_DOMAIN,
+// Env (GitHub repo Secrets): META_ACCESS_TOKEN, FRAPPE_API_KEY,
+//   FRAPPE_API_SECRET, FRAPPE_INSIGHTS_URL, SHOPIFY_STORE_DOMAIN,
 //   SHOPIFY_ADMIN_TOKEN.
 
 import { readFileSync, writeFileSync } from 'fs';
@@ -150,9 +150,8 @@ async function getPerformance(token) {
   return { dailyCreatives, accountStatus, window: { since, until } };
 }
 
-// ---------- LeadSquared MQL ----------
+// ---------- Shared scoring config (cities used by MQL scoring) ----------
 const QUALIFYING_CITIES = ['mumbai','bombay','navi mumbai','thane','thane west','vasai','kalyan','dombivli','dahisar','new panvel','panvel','delhi','new delhi','delhi-ncr','west delhi','najafgarh','dwarka','rohini','gurugram','gurgaon','noida','greater noida','noida extension','ghaziabad','gaziabad','indirapuram','faridabad','bengaluru','bangalore','banglore','bangaluru','bengalore','hyderabad','secunderabad','chennai','madras','pune','pimpri-chinchwad','pcmc','kolkata','calcutta','howrah','madhyamgram','barrackpore','ahmedabad','gandhinagar','lucknow','chandigarh','mohali','panchkula','jaipur','indore','kochi','cochin','ernakulam','nagpur','bhubaneswar','meerut'];
-const LSQ_FIELDS = ['ProspectID','CreatedOn','mx_utm_disease','mx_Age_Group','mx_City','mx_Do_you_remember_your_HbA1c_levels','mx_Do_you_know_your_recent_blood_sugar_level','mx_Are_you_open_to_investing_in_this_paid_program_of','mx_Waist_Circumference','mx_Is_your_weight_or_BMI_higher_than_recommended','ProspectStage','Source','mx_are_you_open_to_a_medically_supervised_GLP_program','mx_user_source','OwnerIdName'];
 // ---------- Counsellor leaderboard helpers (shared: LSQ lead owner + sheet Health Counsellor) ----------
 // The counsellor who OWNS a lead in LeadSquared is the same person who closes the sale in the SharePoint
 // sheet, but a few names differ slightly between systems, so normalise both through one map. System /
@@ -163,7 +162,6 @@ function canonCounsellor(raw){ const t=(raw==null?'':raw.toString()).replace(/\s
 // Care program (workspace 'Program' rule) = Care Plan + Sema Care Plan + Smart CGM; everything else
 // (Standalone CGM/BCA/Transmitter, Diagnostics, ...) is non-care. GLP Drug is already excluded upstream.
 function isCareSale(saleType){ const x=(saleType||'').toString().toLowerCase(); return x.includes('care plan')||x.includes('sema')||(x.includes('smart')&&x.includes('cgm')); }
-const LSQ_SOURCE_MAP = {'fb lead ads':'FB Lead Ads','whatsapp marketing':'WhatsApp Marketing','webpage lead':'Webpage Lead','tata 1mg':'TATA 1MG','affiliate':'Affiliate'};
 // Canonicalise EVERY lead source into a friendly label (not just the mapped 5) so the dashboard can
 // show a full Leads-by-Source breakdown and count Instagram / Facebook / Social. Keeps the exact keys
 // the dashboard already reads ('FB Lead Ads','WhatsApp Marketing','Webpage Lead','TATA 1MG','Affiliate').
@@ -274,34 +272,6 @@ async function getFrappeLeads(){
   }
   return { lsqAllDaily, lsqSourceDaily, lsqStageDaily, counsellorLeadsDaily, mqlDaily:{}, glpYesDaily:{}, mqlCityDaily:{}, mqlAgeDaily:{}, pulled, window:{since,until} };
 }
-async function getMQL(){
-  const host=process.env.LSQ_HOST, ak=process.env.LSQ_ACCESS_KEY, sk=process.env.LSQ_SECRET_KEY;
-  if(!host||!ak||!sk) throw new Error('LSQ creds missing');
-  const since=daysAgo(MQL_DAYS), until=TODAY;
-  const base=`https://${host}/v2/LeadManagement.svc/Leads.RecentlyModified?accessKey=${encodeURIComponent(ak)}&secretKey=${encodeURIComponent(sk)}`;
-  const seen={};
-  for(let page=1; page<=60; page++){
-    const body={ Parameter:{FromDate:since+' 00:00:00',ToDate:until+' 23:59:59'}, Columns:{Include_CSV:LSQ_FIELDS.join(',')}, Sorting:{ColumnName:'CreatedOn',Direction:'1'}, Paging:{PageIndex:page,PageSize:1000} };
-    const r=await fetch(base,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    if(!r.ok){ const t=await r.text(); throw new Error(`LSQ ${r.status}: ${t.slice(0,300)}`); }
-    const j=await r.json(); const leads=j.Leads||j.RecentlyModifiedLeads||(Array.isArray(j)?j:[])||[];
-    if(!leads.length)break;
-    for(const raw of leads){ const rec=flatten(raw); if(rec.ProspectID&&!seen[rec.ProspectID])seen[rec.ProspectID]=rec; }
-    if(leads.length<1000)break;
-  }
-  const mqlDaily={}, lsqAllDaily={}, lsqStageDaily={}, lsqSourceDaily={}, glpYesDaily={}, mqlCityDaily={}, mqlAgeDaily={}, counsellorLeadsDaily={};
-  for(const rec of Object.values(seen)){
-    const co=istDate(rec.CreatedOn); if(!co||co<since||co>until)continue;
-    lsqAllDaily[co]=(lsqAllDaily[co]||0)+1; { const _cn=canonCounsellor(rec.OwnerIdName); if(_cn){ (counsellorLeadsDaily[co]=counsellorLeadsDaily[co]||{}); counsellorLeadsDaily[co][_cn]=(counsellorLeadsDaily[co][_cn]||0)+1; } } const srcL=(rec.Source||'').trim().toLowerCase(); let srcKey=canonSource(rec.Source); const us=(rec.mx_user_source||'').toLowerCase(); if(!srcKey){ srcKey = us.includes('glp') ? 'GLP (no source)' : '(no source)'; } (lsqSourceDaily[co]=lsqSourceDaily[co]||{}); lsqSourceDaily[co][srcKey]=(lsqSourceDaily[co][srcKey]||0)+1;
-      if(srcL==='fb lead ads'){ const glpA=(rec.mx_are_you_open_to_a_medically_supervised_GLP_program||'').toLowerCase(); const glpTh=lsqTherapy(rec.mx_utm_disease); if(glpA.includes('yes')&&(glpTh==='Diabetes'||glpTh==='Obesity')){ glpYesDaily[co]=(glpYesDaily[co]||0)+1; } }
-    const sc=scoreLead(rec); if(!sc)continue;
-    if(srcL==='fb lead ads'){ (mqlDaily[co]=mqlDaily[co]||{}); (mqlDaily[co][sc.therapy]=mqlDaily[co][sc.therapy]||{t:0,pa:0,ro:0,rv:0,fl:0});
-    const c=mqlDaily[co][sc.therapy]; c.t++; c[sc.verdict]++; if(sc.verdict==='pa'||sc.verdict==='ro'){ const cty=(rec.mx_City||'').trim()||'(blank)', ag=(rec.mx_Age_Group||'').trim()||'(blank)'; (mqlCityDaily[co]=mqlCityDaily[co]||{}); mqlCityDaily[co][cty]=(mqlCityDaily[co][cty]||0)+1; (mqlAgeDaily[co]=mqlAgeDaily[co]||{}); mqlAgeDaily[co][ag]=(mqlAgeDaily[co][ag]||0)+1; } }
-    const stg=normalizeStage(rec.ProspectStage);
-    if(stg){ (lsqStageDaily[co]=lsqStageDaily[co]||{}); (lsqStageDaily[co][sc.therapy]=lsqStageDaily[co][sc.therapy]||{}); lsqStageDaily[co][sc.therapy][stg]=(lsqStageDaily[co][sc.therapy][stg]||0)+1; }
-  }
-  return { mqlDaily, lsqAllDaily, lsqStageDaily, lsqSourceDaily, glpYesDaily, mqlCityDaily, mqlAgeDaily, counsellorLeadsDaily, pulled:Object.keys(seen).length, window:{since,until} };
-}
 
 // ---------- Shopify ----------
 function productBucket(title){ const t=(title||'').trim();
@@ -399,7 +369,6 @@ async function getGokwik(){
   } finally { await client.logout().catch(()=>{}); }
   if(!funnelDaily && !abandonedDaily) throw new Error('no GoKwik report emails found (schedule Checkout Analytics Funnel + Abandoned Cart to '+user+')');
   return { funnelDaily, abandonedDaily, info }; }
-
 
 // ---------- Program Revenue (from SharePoint sales sheet, anonymous download) ----------
 // Source is a personal SharePoint share set to "anyone with the link can view", so an
