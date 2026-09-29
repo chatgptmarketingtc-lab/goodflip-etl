@@ -215,6 +215,8 @@ function scoreLead(rec){ const t=lsqTherapy(rec.mx_utm_disease); if(!t)return nu
 const FRAPPE_BASE = (process.env.FRAPPE_BASE_URL || 'https://api.mytatva.in').replace(/\/+$/,'');
 const FRAPPE_SECRET = process.env.FRAPPE_SECRET_KEY || '';
 const FRAPPE_ACCOUNT = process.env.FRAPPE_ACCOUNT || 'GoodFlip'; const FRAPPE_MIN_GAP_MS = Number(process.env.FRAPPE_MIN_GAP_MS || 10000); let _frappeLast = 0; const _frappeSleep = ms => new Promise(r=>setTimeout(r, ms)); async function frappeGate(){ const wait = _frappeLast + FRAPPE_MIN_GAP_MS - Date.now(); if(wait>0) await _frappeSleep(wait); _frappeLast = Date.now(); }
+function normPhone(s){ if(s==null) return ''; var d=String(s).replace(/\D/g,''); return d.length>=10?d.slice(-10):''; }
+let LEADS_RAW=[];
 // Frappe source values -> dashboard display keys (light normalization; unknowns pass through as-is).
 const FRAPPE_SRC_MAP = { 'fb lead ads':'FB Lead Ads','whatsapp marketing':'WhatsApp Marketing','partner api':'Partner API','tata 1mg':'TATA 1MG','tata1mg':'TATA 1MG','affiliate':'Affiliate','instagram':'Instagram','webpage lead':'Webpage Lead','contact form 7':'Webpage Lead','self sourced':'Self Sourced','inbound phone call':'Inbound Phone Call','outbound phone call':'Outbound Phone Call','doc led gtm':'Doc Led GTM','customer referral':'Customer Referral','existing customer referral':'Customer Referral' };
 function frappeSource(s){ const t=(s==null?'':String(s)).trim(); if(!t) return '(no source)'; return FRAPPE_SRC_MAP[t.toLowerCase()] || t; }
@@ -243,7 +245,7 @@ function frappeOwnerName(email){ if(!email) return null; const local=String(emai
 function ymdPlus(ymd,n){ const p=String(ymd).split('-').map(Number); const t=new Date(Date.UTC(p[0],p[1]-1,p[2])); t.setUTCDate(t.getUTCDate()+n); return t.toISOString().slice(0,10); }
 // Page through a single calendar day [day .. day+1) and tally count / source / substage / owner.
 async function frappeDay(day){
-  const out={ count:0, src:{}, stage:{}, owner:{} };
+  const out={ count:0, src:{}, stage:{}, owner:{}, leads:[] };
   const nd=ymdPlus(day,1); let offset=0;
   for(let p=0;p<80;p++){
     const qs=new URLSearchParams({ account:FRAPPE_ACCOUNT, limit:'200', offset:String(offset), created_after:day, created_before:nd });
@@ -251,7 +253,7 @@ async function frappeDay(day){
     if(!r.ok){ const t=await r.text().catch(()=> ''); throw new Error('Frappe '+r.status+' '+day+': '+t.slice(0,140)); }
     const j=await r.json(); const m=(j&&j.data&&j.data.data)||{}; const leads=m.leads||[];
     for(const L of leads){
-      out.count++;
+      out.count++; if(L.facebook_lead_id&&String(L.facebook_lead_id)!=='null'){out.leads.push({f:String(L.facebook_lead_id),m:normPhone(L.mobile_no),d:day});}
       const s=frappeLeadSource(L.source, L.custom_source_origin); out.src[s]=(out.src[s]||0)+1;
       const st=(L.custom_substage==null?'':String(L.custom_substage).split('::').pop().trim()); if(st){ out.stage[st]=(out.stage[st]||0)+1; }
       const nm=canonCounsellor(frappeOwnerName(L.lead_owner)); if(nm){ out.owner[nm]=(out.owner[nm]||0)+1; }
@@ -268,12 +270,30 @@ async function getFrappeLeads(){
   let pulled=0;
   for(let d=since; d<=until; d=ymdPlus(d,1)){
     let r=null; for(let a=0;a<3;a++){ try{ r=await frappeDay(d); break; }catch(e){ if(a<2) await _frappeSleep(20000); else console.log('[frappe] skipped '+d+': '+e.message); } } if(!r) continue;
-    if(r.count>0){ lsqAllDaily[d]=r.count; lsqSourceDaily[d]=r.src; lsqStageDaily[d]=r.stage; counsellorLeadsDaily[d]=r.owner; pulled+=r.count; }
+    if(r.count>0){ lsqAllDaily[d]=r.count; lsqSourceDaily[d]=r.src; lsqStageDaily[d]=r.stage; counsellorLeadsDaily[d]=r.owner; pulled+=r.count; if(r.leads&&r.leads.length){for(var _li=0;_li<r.leads.length;_li++)LEADS_RAW.push(r.leads[_li]);} }
   }
   return { lsqAllDaily, lsqSourceDaily, lsqStageDaily, counsellorLeadsDaily, mqlDaily:{}, glpYesDaily:{}, mqlCityDaily:{}, mqlAgeDaily:{}, pulled, window:{since,until} };
 }
 
 
+
+async function getCreativeCAC(token){
+  if(!token) throw new Error('META_ACCESS_TOKEN missing');
+  if(!PROGRAM_REV_URL) throw new Error('PROGRAM_REVENUE_XLSX_URL not set');
+  const XLSX=await import('xlsx');
+  const revUrl=PROGRAM_REV_URL+(PROGRAM_REV_URL.includes('?')?'&':'?')+'nocache='+Date.now();
+  const rr=await fetch(revUrl); if(((rr.headers.get('content-type')||'').toLowerCase()).includes('text/html')) throw new Error('rev sheet HTML not xlsx');
+  const wb=XLSX.read(Buffer.from(await rr.arrayBuffer()),{cellDates:false});
+  const phones=new Set();
+  for(const sn of wb.SheetNames){ const ws=wb.Sheets[sn]; const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:null}); if(!rows||!rows.length)continue; const hdr=(rows[0]||[]).map(function(h){return (h==null?'':String(h)).toLowerCase().replace(/[^a-z0-9]/g,'');}); const ci=hdr.indexOf('contactnumber'); const ni=hdr.findIndex(function(h){return h.indexOf('netrevenue')>=0;}); const sti=hdr.findIndex(function(h){return h.indexOf('saletype')>=0;}); if(ci<0||ni<0)continue; for(let i=1;i<rows.length;i++){ const row=rows[i]; if(!row)continue; const net=parseFloat(row[ni]); if(!isFinite(net))continue; const st=(sti>=0&&row[sti]!=null)?String(row[sti]).toLowerCase():''; if(st.indexOf('glp drug')>=0)continue; const ph=normPhone(row[ci]); if(ph)phones.add(ph); } }
+  const byPhone={}; for(const l of LEADS_RAW){ if(l&&l.m&&phones.has(l.m)&&l.f){ if(!byPhone[l.m]||l.d>byPhone[l.m].d) byPhone[l.m]=l; } }
+  const conv=Object.keys(byPhone).map(function(k){return byPhone[k];});
+  const adOf={};
+  for(let i=0;i<conv.length;i+=45){ const chunk=conv.slice(i,i+45); const batch=chunk.map(function(l){return {method:'GET',relative_url:l.f+'?fields=ad_name'};}); const bodyP=new URLSearchParams({access_token:token,batch:JSON.stringify(batch)}); let br; try{ br=await fetch('https://graph.facebook.com/'+GRAPH_VERSION+'/',{method:'POST',body:bodyP}); }catch(e){ continue; } const bj=await br.json().catch(function(){return null;}); if(Array.isArray(bj)){ for(let k=0;k<bj.length;k++){ const it=bj[k]; if(it&&(it.code===200||it.code==='200')&&it.body){ try{ const pb=JSON.parse(it.body); if(pb&&pb.ad_name) adOf[chunk[k].f]=pb.ad_name; }catch(e){} } } } await _frappeSleep(1200); }
+  const creativeCustDaily={}; let enriched=0;
+  for(const l of conv){ const ad=adOf[l.f]; if(!ad)continue; enriched++; (creativeCustDaily[l.d]=creativeCustDaily[l.d]||{}); creativeCustDaily[l.d][ad]=(creativeCustDaily[l.d][ad]||0)+1; }
+  return { creativeCustDaily:creativeCustDaily, info:{ customersInSheet:phones.size, convertingLeads:conv.length, enriched:enriched, creatives:Object.keys(adOf).length } };
+}
 
 // ---------- Shopify ----------
 function productBucket(title){ const t=(title||'').trim();
@@ -646,7 +666,7 @@ const modeEnv = (process.env.REFRESH_MODE||'').toLowerCase();
 const _lastFull = (prev.meta && prev.meta.lastFullRun) ? Date.parse(prev.meta.lastFullRun) : 0;
 const _metaStale = !_lastFull || (Date.now() - _lastFull) > 55*60*1000;
 const LIGHT = (modeEnv === 'light') && !_metaStale;
-const out={ dailyCreatives:prev.dailyCreatives||{}, creativeImages:{}, mqlDaily:prev.mqlDaily||{}, lsqAllDaily:prev.lsqAllDaily||{}, lsqStageDaily:prev.lsqStageDaily||{}, lsqSourceDaily:prev.lsqSourceDaily||{}, glpYesDaily:prev.glpYesDaily||{}, mqlCityDaily:prev.mqlCityDaily||{}, mqlAgeDaily:prev.mqlAgeDaily||{}, shopifyDaily:prev.shopifyDaily||{}, gokwikFunnelDaily:prev.gokwikFunnelDaily||{}, gokwikAbandonedDaily:prev.gokwikAbandonedDaily||{}, programRevenueDaily:prev.programRevenueDaily||{}, programSalesDaily:prev.programSalesDaily||{}, counsellorSalesDaily:prev.counsellorSalesDaily||{}, counsellorLeadsDaily:prev.counsellorLeadsDaily||{}, meta: Object.assign({}, prev.meta||{}, { sources: Object.assign({}, (prev.meta&&prev.meta.sources)||{}), version:'gha-v1', lastRun:new Date().toISOString(), mode: LIGHT?'light':'full' }) };
+const out={ dailyCreatives:prev.dailyCreatives||{}, creativeImages:{}, mqlDaily:prev.mqlDaily||{}, lsqAllDaily:prev.lsqAllDaily||{}, lsqStageDaily:prev.lsqStageDaily||{}, lsqSourceDaily:prev.lsqSourceDaily||{}, glpYesDaily:prev.glpYesDaily||{}, mqlCityDaily:prev.mqlCityDaily||{}, mqlAgeDaily:prev.mqlAgeDaily||{}, shopifyDaily:prev.shopifyDaily||{}, gokwikFunnelDaily:prev.gokwikFunnelDaily||{}, gokwikAbandonedDaily:prev.gokwikAbandonedDaily||{}, programRevenueDaily:prev.programRevenueDaily||{}, programSalesDaily:prev.programSalesDaily||{}, creativeCustDaily:prev.creativeCustDaily||{}, counsellorSalesDaily:prev.counsellorSalesDaily||{}, counsellorLeadsDaily:prev.counsellorLeadsDaily||{}, meta: Object.assign({}, prev.meta||{}, { sources: Object.assign({}, (prev.meta&&prev.meta.sources)||{}), version:'gha-v1', lastRun:new Date().toISOString(), mode: LIGHT?'light':'full' }) };
 // Mark when a full (Meta) pull is attempted so auto-escalation waits ~1h before the next one
 // (prevents hammering Meta's rate limit if a pull fails).
 if(!LIGHT) out.meta.lastFullRun = new Date().toISOString();
@@ -716,6 +736,7 @@ await run('programRevenue', getProgramRevenue, r=>{
 
 // Renewed care-plan revenue vs monthly target (auto-pulled from the Renewal & Referral sheet). Fail-soft: a bad
 // fetch keeps the previous meta.renewal instead of blanking the tracker.
+if(!LIGHT) await run('creativeCAC', ()=>getCreativeCAC(token), r=>{ out.creativeCustDaily=r.creativeCustDaily; out.meta.creativeCAC=r.info; });
 await run('renewal', getRenewalRevenue, r=>{ out.meta.renewal = r; });
 
 const dates=Object.keys(out.dailyCreatives).sort();
