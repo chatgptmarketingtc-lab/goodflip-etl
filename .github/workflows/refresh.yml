@@ -9,7 +9,7 @@ on:
       mode:
         description: 'full or light'
         required: false
-        default: 'light'
+        default: 'full'
 
 permissions:
   contents: write
