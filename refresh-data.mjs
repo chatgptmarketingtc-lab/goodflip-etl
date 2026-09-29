@@ -217,7 +217,6 @@ const FRAPPE_SECRET = process.env.FRAPPE_SECRET_KEY || '';
 const FRAPPE_ACCOUNT = process.env.FRAPPE_ACCOUNT || 'GoodFlip'; const FRAPPE_MIN_GAP_MS = Number(process.env.FRAPPE_MIN_GAP_MS || 10000); let _frappeLast = 0; const _frappeSleep = ms => new Promise(r=>setTimeout(r, ms)); async function frappeGate(){ const wait = _frappeLast + FRAPPE_MIN_GAP_MS - Date.now(); if(wait>0) await _frappeSleep(wait); _frappeLast = Date.now(); }
 function normPhone(s){ if(s==null) return ''; var d=String(s).replace(/\D/g,''); return d.length>=10?d.slice(-10):''; }
 let LEADS_RAW=[];
-async function fetchT(u,o,ms){ const c=new AbortController(); const t=setTimeout(()=>c.abort(),ms||20000); try{ return await fetch(u, Object.assign({signal:c.signal}, o||{})); } finally{ clearTimeout(t); } }
 // Frappe source values -> dashboard display keys (light normalization; unknowns pass through as-is).
 const FRAPPE_SRC_MAP = { 'fb lead ads':'FB Lead Ads','whatsapp marketing':'WhatsApp Marketing','partner api':'Partner API','tata 1mg':'TATA 1MG','tata1mg':'TATA 1MG','affiliate':'Affiliate','instagram':'Instagram','webpage lead':'Webpage Lead','contact form 7':'Webpage Lead','self sourced':'Self Sourced','inbound phone call':'Inbound Phone Call','outbound phone call':'Outbound Phone Call','doc led gtm':'Doc Led GTM','customer referral':'Customer Referral','existing customer referral':'Customer Referral' };
 function frappeSource(s){ const t=(s==null?'':String(s)).trim(); if(!t) return '(no source)'; return FRAPPE_SRC_MAP[t.toLowerCase()] || t; }
@@ -283,14 +282,14 @@ async function getCreativeCAC(token){
   if(!PROGRAM_REV_URL) throw new Error('PROGRAM_REVENUE_XLSX_URL not set');
   const XLSX=await import('xlsx');
   const revUrl=PROGRAM_REV_URL+(PROGRAM_REV_URL.includes('?')?'&':'?')+'nocache='+Date.now();
-  const rr=await fetchT(revUrl,{},30000); if(((rr.headers.get('content-type')||'').toLowerCase()).includes('text/html')) throw new Error('rev sheet HTML not xlsx');
+  const rr=await fetch(revUrl); if(((rr.headers.get('content-type')||'').toLowerCase()).includes('text/html')) throw new Error('rev sheet HTML not xlsx');
   const wb=XLSX.read(Buffer.from(await rr.arrayBuffer()),{cellDates:false});
   const phones=new Set();
   for(const sn of wb.SheetNames){ const ws=wb.Sheets[sn]; const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:null}); if(!rows||!rows.length)continue; const hdr=(rows[0]||[]).map(function(h){return (h==null?'':String(h)).toLowerCase().replace(/[^a-z0-9]/g,'');}); const ci=hdr.indexOf('contactnumber'); const ni=hdr.findIndex(function(h){return h.indexOf('netrevenue')>=0;}); const sti=hdr.findIndex(function(h){return h.indexOf('saletype')>=0;}); if(ci<0||ni<0)continue; for(let i=1;i<rows.length;i++){ const row=rows[i]; if(!row)continue; const net=parseFloat(row[ni]); if(!isFinite(net))continue; const st=(sti>=0&&row[sti]!=null)?String(row[sti]).toLowerCase():''; if(st.indexOf('glp drug')>=0)continue; const ph=normPhone(row[ci]); if(ph)phones.add(ph); } }
   const byPhone={}; for(const l of LEADS_RAW){ if(l&&l.m&&phones.has(l.m)&&l.f){ if(!byPhone[l.m]||l.d>byPhone[l.m].d) byPhone[l.m]=l; } }
   const conv=Object.keys(byPhone).map(function(k){return byPhone[k];});
   const adOf={};
-  for(let i=0;i<conv.length;i+=45){ const chunk=conv.slice(i,i+45); const batch=chunk.map(function(l){return {method:'GET',relative_url:l.f+'?fields=ad_name'};}); const bodyP=new URLSearchParams({access_token:token,batch:JSON.stringify(batch)}); let br; try{ br=await fetchT('https://graph.facebook.com/'+GRAPH_VERSION+'/',{method:'POST',body:bodyP},25000); }catch(e){ continue; } const bj=await br.json().catch(function(){return null;}); if(Array.isArray(bj)){ for(let k=0;k<bj.length;k++){ const it=bj[k]; if(it&&(it.code===200||it.code==='200')&&it.body){ try{ const pb=JSON.parse(it.body); if(pb&&pb.ad_name) adOf[chunk[k].f]=pb.ad_name; }catch(e){} } } } await _frappeSleep(1200); }
+  for(let i=0;i<conv.length;i+=45){ const chunk=conv.slice(i,i+45); const batch=chunk.map(function(l){return {method:'GET',relative_url:l.f+'?fields=ad_name'};}); const bodyP=new URLSearchParams({access_token:token,batch:JSON.stringify(batch)}); let br; try{ br=await fetch('https://graph.facebook.com/'+GRAPH_VERSION+'/',{method:'POST',body:bodyP}); }catch(e){ continue; } const bj=await br.json().catch(function(){return null;}); if(Array.isArray(bj)){ for(let k=0;k<bj.length;k++){ const it=bj[k]; if(it&&(it.code===200||it.code==='200')&&it.body){ try{ const pb=JSON.parse(it.body); if(pb&&pb.ad_name) adOf[chunk[k].f]=pb.ad_name; }catch(e){} } } } await _frappeSleep(1200); }
   const creativeCustDaily={}; let enriched=0;
   for(const l of conv){ const ad=adOf[l.f]; if(!ad)continue; enriched++; (creativeCustDaily[l.d]=creativeCustDaily[l.d]||{}); creativeCustDaily[l.d][ad]=(creativeCustDaily[l.d][ad]||0)+1; }
   return { creativeCustDaily:creativeCustDaily, info:{ customersInSheet:phones.size, convertingLeads:conv.length, enriched:enriched, creatives:Object.keys(adOf).length } };
@@ -737,7 +736,7 @@ await run('programRevenue', getProgramRevenue, r=>{
 
 // Renewed care-plan revenue vs monthly target (auto-pulled from the Renewal & Referral sheet). Fail-soft: a bad
 // fetch keeps the previous meta.renewal instead of blanking the tracker.
-if(!LIGHT) await run('creativeCAC', ()=>Promise.race([getCreativeCAC(token), new Promise(_res=>setTimeout(()=>_res({creativeCustDaily:{},info:{timeout:true}}),150000))]), r=>{ out.creativeCustDaily=r.creativeCustDaily; out.meta.creativeCAC=r.info; });
+if(!LIGHT) await run('creativeCAC', ()=>getCreativeCAC(token), r=>{ out.creativeCustDaily=r.creativeCustDaily; out.meta.creativeCAC=r.info; });
 await run('renewal', getRenewalRevenue, r=>{ out.meta.renewal = r; });
 
 const dates=Object.keys(out.dailyCreatives).sort();
@@ -777,7 +776,7 @@ try {
 try {
   const KV_URL = process.env.KV_REST_API_URL, KV_TOKEN = process.env.KV_REST_API_TOKEN;
   if (KV_URL && KV_TOKEN) {
-    const SLIM = ['meta','dailyCreatives','mqlDaily','lsqAllDaily','lsqStageDaily','lsqSourceDaily','glpYesDaily','mqlCityDaily','mqlAgeDaily','programSalesDaily','programRevenueDaily','counsellorSalesDaily','counsellorLeadsDaily'];
+    const SLIM = ['meta','dailyCreatives','mqlDaily','lsqAllDaily','lsqStageDaily','lsqSourceDaily','glpYesDaily','mqlCityDaily','mqlAgeDaily','programSalesDaily','programRevenueDaily','counsellorSalesDaily','counsellorLeadsDaily','creativeCustDaily'];
     const slim = {}; for (const k of SLIM) slim[k] = out[k];
     const payload = JSON.stringify(slim);
     const r = await fetch(`${KV_URL}/set/${encodeURIComponent('goodflip:feed')}`, {
