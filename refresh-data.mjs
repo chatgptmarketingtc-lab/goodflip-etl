@@ -274,7 +274,6 @@ async function getFrappeLeads(){
 }
 
 
-async function utmDiag(){try{if(!FRAPPE_SECRET)return {error:'no key'};var acc={},sampleKeys=null,firstLead=null,scanned=0;for(var b=2;b<=6;b++){var day=daysAgo(b),nd=ymdPlus(day,1);var qs=new URLSearchParams({account:FRAPPE_ACCOUNT,limit:'100',offset:'0',created_after:day,created_before:nd});await frappeGate();var rr=await fetch(FRAPPE_BASE+'/api/v8/frappe-partner/leads/list?'+qs.toString(),{headers:{'frappe-secret-key':FRAPPE_SECRET,'isdecrypted':'1','Accept':'application/json'}});if(!rr.ok){return {status:rr.status,body:(await rr.text().catch(function(){return '';})).slice(0,160)};}var j=await rr.json();var leads=((j&&j.data&&j.data.data)||{}).leads||[];for(var i=0;i<leads.length;i++){var L=leads[i];if(!firstLead){firstLead=L;sampleKeys=Object.keys(L);}(function walk(o,pre){if(!o||typeof o!=='object')return;for(var k in o){var key=pre+k;if(/utm|campaign|adname|ad_name|adid|ad_id|content|term|acquisition|creative|origin|source|platform|user_source/i.test(k)){acc[key]=acc[key]||{};var v=(o[k]&&typeof o[k]==='object')?'[obj]':String(o[k]).slice(0,60);acc[key][v]=(acc[key][v]||0)+1;}if(o[k]&&typeof o[k]==='object'&&pre.length<24)walk(o[k],key+'.');}})(L,'');scanned++;}if(scanned>=60)break;}var dist={};Object.keys(acc).forEach(function(k){dist[k]=Object.keys(acc[k]).slice(0,12);});return {scanned:scanned,sampleLeadKeys:sampleKeys,utmish:dist};}catch(e){return {error:String(e&&e.message||e)};}}
 // ---------- Shopify ----------
 function productBucket(title){ const t=(title||'').trim();
   if(t==='GoodFlip Continuous Glucose Monitor'||t==='Sensor | GoodFlip Continuous Glucose Monitor')return 'CGM';
@@ -723,7 +722,6 @@ out.meta.dateRange={ min:dates[0]||'', max:dates[dates.length-1]||'' };
 // Keep the dashboard's current day (perfWindow.until) advancing every run in IST, even on light runs.
 out.meta.perfWindow = Object.assign({ since: daysAgo(PERF_DAYS) }, out.meta.perfWindow || {}, { until: TODAY });
 writeFileSync('data.json', JSON.stringify(out));
-try{ out.meta.utmDiag = await utmDiag(); }catch(e){ out.meta.utmDiag={error:String(e&&e.message||e)}; }
 delete out.meta.sources.mql; // drop stale legacy LSQ 'mql' key carried from prev feed
 console.log('Wrote data.json ['+(out.meta.mode||'full')+'] | perf dates:', dates.length, '| sources:', JSON.stringify(out.meta.sources));
 // Publish the canonical feed to Vercel Blob - the neutral store BOTH dashboards read as
