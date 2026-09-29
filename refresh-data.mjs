@@ -275,7 +275,6 @@ async function getFrappeLeads(){
 
 
 
-async function leadLookupTest(tok){try{if(!FRAPPE_SECRET)return {error:'no frappe key'};if(!tok)return {error:'no meta token'};var day=daysAgo(3),nd=ymdPlus(day,1);var qs=new URLSearchParams({account:FRAPPE_ACCOUNT,limit:'80',offset:'0',created_after:day,created_before:nd});await frappeGate();var lr=await fetch(FRAPPE_BASE+'/api/v8/frappe-partner/leads/list?'+qs.toString(),{headers:{'frappe-secret-key':FRAPPE_SECRET,'isdecrypted':'1','Accept':'application/json'}});var lj=await lr.json();var leads=((lj&&lj.data&&lj.data.data)||{}).leads||[];var ids=[];for(var i=0;i<leads.length;i++){var v=leads[i].facebook_lead_id;if(v&&String(v)!=='null'){ids.push(String(v));if(ids.length>=3)break;}}if(!ids.length)return {error:'no facebook_lead_id in sample',sampled:leads.length};var out=[];for(var j=0;j<ids.length;j++){var u='https://graph.facebook.com/'+GRAPH_VERSION+'/'+ids[j]+'?fields=id,ad_id,ad_name,campaign_name,adset_name,created_time&access_token='+encodeURIComponent(tok);var mr=await fetch(u);var mj=await mr.json().catch(function(){return {};});out.push({lead_id:ids[j],http:mr.status,ad_name:(mj&&mj.ad_name)||null,campaign:(mj&&mj.campaign_name)||null,error:(mj&&mj.error)?{message:mj.error.message,type:mj.error.type,code:mj.error.code,sub:mj.error.error_subcode}:null});}return {tested:ids.length,results:out};}catch(e){return {error:String(e&&e.message||e)};}}
 // ---------- Shopify ----------
 function productBucket(title){ const t=(title||'').trim();
   if(t==='GoodFlip Continuous Glucose Monitor'||t==='Sensor | GoodFlip Continuous Glucose Monitor')return 'CGM';
@@ -724,7 +723,6 @@ out.meta.dateRange={ min:dates[0]||'', max:dates[dates.length-1]||'' };
 // Keep the dashboard's current day (perfWindow.until) advancing every run in IST, even on light runs.
 out.meta.perfWindow = Object.assign({ since: daysAgo(PERF_DAYS) }, out.meta.perfWindow || {}, { until: TODAY });
 writeFileSync('data.json', JSON.stringify(out));
-try{ out.meta.leadLookupTest = await leadLookupTest(token); }catch(e){ out.meta.leadLookupTest={error:String(e&&e.message||e)}; }
 delete out.meta.sources.mql; // drop stale legacy LSQ 'mql' key carried from prev feed
 console.log('Wrote data.json ['+(out.meta.mode||'full')+'] | perf dates:', dates.length, '| sources:', JSON.stringify(out.meta.sources));
 // Publish the canonical feed to Vercel Blob - the neutral store BOTH dashboards read as
