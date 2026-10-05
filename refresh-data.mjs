@@ -245,7 +245,7 @@ function frappeOwnerName(email){ if(!email) return null; const local=String(emai
 function ymdPlus(ymd,n){ const p=String(ymd).split('-').map(Number); const t=new Date(Date.UTC(p[0],p[1]-1,p[2])); t.setUTCDate(t.getUTCDate()+n); return t.toISOString().slice(0,10); }
 // Page through a single calendar day [day .. day+1) and tally count / source / substage / owner.
 async function frappeDay(day){
-  const out={ count:0, src:{}, stage:{}, owner:{}, leads:[] };
+  const out={ count:0, src:{}, stage:{}, owner:{}, srcConv:{}, leads:[] };
   const nd=ymdPlus(day,1); let offset=0;
   for(let p=0;p<80;p++){
     const qs=new URLSearchParams({ account:FRAPPE_ACCOUNT, limit:'200', offset:String(offset), created_after:day, created_before:nd });
@@ -255,7 +255,7 @@ async function frappeDay(day){
     for(const L of leads){
       out.count++; if(L.facebook_lead_id&&String(L.facebook_lead_id)!=='null'){out.leads.push({f:String(L.facebook_lead_id),m:normPhone(L.mobile_no),d:day});}
       const s=frappeLeadSource(L.source, L.custom_source_origin); out.src[s]=(out.src[s]||0)+1;
-      const st=(L.custom_substage==null?'':String(L.custom_substage).split('::').pop().trim()); if(st){ out.stage[st]=(out.stage[st]||0)+1; }
+      const st=(L.custom_substage==null?'':String(L.custom_substage).split('::').pop().trim()); if(st){ out.stage[st]=(out.stage[st]||0)+1; if(st==='Converted'){ out.srcConv[s]=(out.srcConv[s]||0)+1; } }
       const nm=canonCounsellor(frappeOwnerName(L.lead_owner)); if(nm){ out.owner[nm]=(out.owner[nm]||0)+1; }
     }
     if(!m.has_more || leads.length<200) break; offset+=200;
@@ -266,13 +266,13 @@ async function getFrappeLeads(){
   if(!FRAPPE_SECRET) throw new Error('FRAPPE_SECRET_KEY missing');
   const days = LIGHT ? 8 : 31;                 // light run refreshes recent days; full run the whole window
   const until=TODAY, since=daysAgo(days);
-  const lsqAllDaily={}, lsqSourceDaily={}, lsqStageDaily={}, counsellorLeadsDaily={};
+  const lsqAllDaily={}, lsqSourceDaily={}, lsqStageDaily={}, lsqSourceConvDaily={}, counsellorLeadsDaily={};
   let pulled=0;
   for(let d=since; d<=until; d=ymdPlus(d,1)){
     let r=null; for(let a=0;a<3;a++){ try{ r=await frappeDay(d); break; }catch(e){ if(a<2) await _frappeSleep(20000); else console.log('[frappe] skipped '+d+': '+e.message); } } if(!r) continue;
-    if(r.count>0){ lsqAllDaily[d]=r.count; lsqSourceDaily[d]=r.src; lsqStageDaily[d]=r.stage; counsellorLeadsDaily[d]=r.owner; pulled+=r.count; if(r.leads&&r.leads.length){for(var _li=0;_li<r.leads.length;_li++)LEADS_RAW.push(r.leads[_li]);} }
+    if(r.count>0){ lsqAllDaily[d]=r.count; lsqSourceDaily[d]=r.src; lsqStageDaily[d]=r.stage; lsqSourceConvDaily[d]=r.srcConv; counsellorLeadsDaily[d]=r.owner; pulled+=r.count; if(r.leads&&r.leads.length){for(var _li=0;_li<r.leads.length;_li++)LEADS_RAW.push(r.leads[_li]);} }
   }
-  return { lsqAllDaily, lsqSourceDaily, lsqStageDaily, counsellorLeadsDaily, mqlDaily:{}, glpYesDaily:{}, mqlCityDaily:{}, mqlAgeDaily:{}, pulled, window:{since,until} };
+  return { lsqAllDaily, lsqSourceDaily, lsqStageDaily, lsqSourceConvDaily, counsellorLeadsDaily, mqlDaily:{}, glpYesDaily:{}, mqlCityDaily:{}, mqlAgeDaily:{}, pulled, window:{since,until} };
 }
 
 
@@ -666,7 +666,7 @@ const modeEnv = (process.env.REFRESH_MODE||'').toLowerCase();
 const _lastFull = (prev.meta && prev.meta.lastFullRun) ? Date.parse(prev.meta.lastFullRun) : 0;
 const _metaStale = !_lastFull || (Date.now() - _lastFull) > 55*60*1000;
 const LIGHT = (modeEnv === 'light') && !_metaStale;
-const out={ dailyCreatives:prev.dailyCreatives||{}, creativeImages:{}, mqlDaily:prev.mqlDaily||{}, lsqAllDaily:prev.lsqAllDaily||{}, lsqStageDaily:prev.lsqStageDaily||{}, lsqSourceDaily:prev.lsqSourceDaily||{}, glpYesDaily:prev.glpYesDaily||{}, mqlCityDaily:prev.mqlCityDaily||{}, mqlAgeDaily:prev.mqlAgeDaily||{}, shopifyDaily:prev.shopifyDaily||{}, gokwikFunnelDaily:prev.gokwikFunnelDaily||{}, gokwikAbandonedDaily:prev.gokwikAbandonedDaily||{}, programRevenueDaily:prev.programRevenueDaily||{}, programSalesDaily:prev.programSalesDaily||{}, creativeCustDaily:prev.creativeCustDaily||{}, counsellorSalesDaily:prev.counsellorSalesDaily||{}, counsellorLeadsDaily:prev.counsellorLeadsDaily||{}, meta: Object.assign({}, prev.meta||{}, { sources: Object.assign({}, (prev.meta&&prev.meta.sources)||{}), version:'gha-v1', lastRun:new Date().toISOString(), mode: LIGHT?'light':'full' }) };
+const out={ dailyCreatives:prev.dailyCreatives||{}, creativeImages:{}, mqlDaily:prev.mqlDaily||{}, lsqAllDaily:prev.lsqAllDaily||{}, lsqStageDaily:prev.lsqStageDaily||{}, lsqSourceDaily:prev.lsqSourceDaily||{}, lsqSourceConvDaily:prev.lsqSourceConvDaily||{}, glpYesDaily:prev.glpYesDaily||{}, mqlCityDaily:prev.mqlCityDaily||{}, mqlAgeDaily:prev.mqlAgeDaily||{}, shopifyDaily:prev.shopifyDaily||{}, gokwikFunnelDaily:prev.gokwikFunnelDaily||{}, gokwikAbandonedDaily:prev.gokwikAbandonedDaily||{}, programRevenueDaily:prev.programRevenueDaily||{}, programSalesDaily:prev.programSalesDaily||{}, creativeCustDaily:prev.creativeCustDaily||{}, counsellorSalesDaily:prev.counsellorSalesDaily||{}, counsellorLeadsDaily:prev.counsellorLeadsDaily||{}, meta: Object.assign({}, prev.meta||{}, { sources: Object.assign({}, (prev.meta&&prev.meta.sources)||{}), version:'gha-v1', lastRun:new Date().toISOString(), mode: LIGHT?'light':'full' }) };
 // Mark when a full (Meta) pull is attempted so auto-escalation waits ~1h before the next one
 // (prevents hammering Meta's rate limit if a pull fails).
 if(!LIGHT) out.meta.lastFullRun = new Date().toISOString();
@@ -703,7 +703,7 @@ if(!LIGHT) try{
   }
   console.log('[spend-backfill] filled '+filled+' historical day(s)');
 }catch(e){ console.log('[spend-backfill] skipped: '+e.message); }
-await run('frappeLeads', getFrappeLeads, r=>{ for(const k of ['lsqAllDaily','lsqStageDaily','lsqSourceDaily','counsellorLeadsDaily']){ if(r[k]) Object.assign(out[k]=out[k]||{}, r[k]); } out.meta.leadsPulled=r.pulled; out.meta.leadSource='frappe'; });
+await run('frappeLeads', getFrappeLeads, r=>{ for(const k of ['lsqAllDaily','lsqStageDaily','lsqSourceDaily','lsqSourceConvDaily','counsellorLeadsDaily']){ if(r[k]) Object.assign(out[k]=out[k]||{}, r[k]); } out.meta.leadsPulled=r.pulled; out.meta.leadSource='frappe'; });
   await run('insightsMQL', getInsightsMQL, r=>{ out.mqlDaily=r.mqlDaily; out.mqlCityDaily=r.mqlCityDaily; out.mqlAgeDaily=r.mqlAgeDaily; out.meta.insightsScored=r.scored; out.meta.insightsPulled=r.pulled; });
 await run('shopify', getShopify, r=>{ out.shopifyDaily=r.shopifyDaily; out.meta.shopifyOrders=r.orders; });
 if(!LIGHT) await run('gokwik', getGokwik, r=>{
@@ -776,7 +776,7 @@ try {
 try {
   const KV_URL = process.env.KV_REST_API_URL, KV_TOKEN = process.env.KV_REST_API_TOKEN;
   if (KV_URL && KV_TOKEN) {
-    const SLIM = ['meta','dailyCreatives','mqlDaily','lsqAllDaily','lsqStageDaily','lsqSourceDaily','glpYesDaily','mqlCityDaily','mqlAgeDaily','programSalesDaily','programRevenueDaily','counsellorSalesDaily','counsellorLeadsDaily','creativeCustDaily'];
+    const SLIM = ['meta','dailyCreatives','mqlDaily','lsqAllDaily','lsqStageDaily','lsqSourceDaily','glpYesDaily','mqlCityDaily','mqlAgeDaily','programSalesDaily','programRevenueDaily','counsellorSalesDaily','counsellorLeadsDaily','creativeCustDaily','lsqSourceConvDaily'];
     const slim = {}; for (const k of SLIM) slim[k] = out[k];
     const payload = JSON.stringify(slim);
     const r = await fetch(`${KV_URL}/set/${encodeURIComponent('goodflip:feed')}`, {
