@@ -31,4 +31,4 @@ jobs:
             }
           })();
           EOF
-          node probe.mjs
+          node probe.mjs | tee -a "$GITHUB_STEP_SUMMARY"
