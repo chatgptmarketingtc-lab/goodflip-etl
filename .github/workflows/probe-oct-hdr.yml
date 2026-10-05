@@ -1,0 +1,28 @@
+name: probe-oct-hdr
+on: [push]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm i xlsx
+      - name: probe
+        env:
+          PROGRAM_REVENUE_XLSX_URL: ${{ secrets.PROGRAM_REVENUE_XLSX_URL }}
+        run: |
+          cat > o.mjs <<'EOF'
+          const X = await import('xlsx'); const XLSX = X.default || X;
+          const U = process.env.PROGRAM_REVENUE_XLSX_URL;
+          const Q = String.fromCharCode(63), A = String.fromCharCode(38), EQ = String.fromCharCode(61);
+          const u = U + (U.indexOf(Q)>=0?A:Q) + 'nc' + EQ + Date.now();
+          const r = await fetch(u, { cache:'no-store', headers:{ 'Cache-Control':'no-cache' } });
+          const buf = Buffer.from(await r.arrayBuffer());
+          const wb = XLSX.read(buf, { cellDates:false });
+          console.log('SHEETS: ' + wb.SheetNames.join(' | '));
+          for(const name of ['GF-Oct-26','GF-Sep-26']){
+            const ws = wb.Sheets[name];
+            if(!ws){ console.log(name + ' :: NOT FOUND'); continue; }
+            const rows = XLSX.utils.sheet_to_json(ws, { header:1, blankrows:false });
+            console.log(name + ' HEADER: ' + JSON.stringify((rows[0]||[]).map(function(x){return String(x);})));
+          }
+          EOF
+          node o.mjs | tee -a "$GITHUB_STEP_SUMMARY"
