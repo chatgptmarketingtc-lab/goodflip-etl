@@ -711,7 +711,7 @@ async function getConvByDate(){
     }
   }
   const conv = {}; let matched = 0, unmatched = 0;
-  for(const ph of buyers){ const day = firstByPhone[ph]; const src = phoneSrc[ph] || '(unmatched)'; if(phoneSrc[ph]) matched++; else unmatched++; (conv[day] = conv[day] || {}); conv[day][src] = (conv[day][src]||0) + 1; }
+  for(const ph of buyers){ const src = phoneSrc[ph] || '(unmatched)'; if(phoneSrc[ph]) matched++; else unmatched++; const day = lcByPhone[ph]; if(!day) continue; (conv[day] = conv[day] || {}); conv[day][src] = (conv[day][src]||0) + 1; }
   return { conv, phoneSrc, info:{ buyers:buyers.length, matched, unmatched, scanned, daysFetched, withLeadDate:Object.keys(lcByPhone).length, remaining:need.size } };
 }
 async function run(name, fn, apply){ try{ const r=await fn(); apply(r); out.meta.sources[name]='ok'; console.log('['+name+'] ok'); }catch(e){ out.meta.sources[name]='error: '+e.message; console.error('['+name+'] FAILED:', e.message); } }
