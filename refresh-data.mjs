@@ -666,12 +666,42 @@ const modeEnv = (process.env.REFRESH_MODE||'').toLowerCase();
 const _lastFull = (prev.meta && prev.meta.lastFullRun) ? Date.parse(prev.meta.lastFullRun) : 0;
 const _metaStale = !_lastFull || (Date.now() - _lastFull) > 55*60*1000;
 const LIGHT = (modeEnv === 'light') && !_metaStale;
-const out={ dailyCreatives:prev.dailyCreatives||{}, creativeImages:{}, mqlDaily:prev.mqlDaily||{}, lsqAllDaily:prev.lsqAllDaily||{}, lsqStageDaily:prev.lsqStageDaily||{}, lsqSourceDaily:prev.lsqSourceDaily||{}, lsqSourceConvDaily:prev.lsqSourceConvDaily||{}, glpYesDaily:prev.glpYesDaily||{}, mqlCityDaily:prev.mqlCityDaily||{}, mqlAgeDaily:prev.mqlAgeDaily||{}, shopifyDaily:prev.shopifyDaily||{}, gokwikFunnelDaily:prev.gokwikFunnelDaily||{}, gokwikAbandonedDaily:prev.gokwikAbandonedDaily||{}, programRevenueDaily:prev.programRevenueDaily||{}, programSalesDaily:prev.programSalesDaily||{}, creativeCustDaily:prev.creativeCustDaily||{}, counsellorSalesDaily:prev.counsellorSalesDaily||{}, counsellorLeadsDaily:prev.counsellorLeadsDaily||{}, meta: Object.assign({}, prev.meta||{}, { sources: Object.assign({}, (prev.meta&&prev.meta.sources)||{}), version:'gha-v1', lastRun:new Date().toISOString(), mode: LIGHT?'light':'full' }) };
+const out={ dailyCreatives:prev.dailyCreatives||{}, creativeImages:{}, mqlDaily:prev.mqlDaily||{}, lsqAllDaily:prev.lsqAllDaily||{}, lsqStageDaily:prev.lsqStageDaily||{}, lsqSourceDaily:prev.lsqSourceDaily||{}, lsqSourceConvDaily:prev.lsqSourceConvDaily||{}, convSeen:prev.convSeen||{}, glpYesDaily:prev.glpYesDaily||{}, mqlCityDaily:prev.mqlCityDaily||{}, mqlAgeDaily:prev.mqlAgeDaily||{}, shopifyDaily:prev.shopifyDaily||{}, gokwikFunnelDaily:prev.gokwikFunnelDaily||{}, gokwikAbandonedDaily:prev.gokwikAbandonedDaily||{}, programRevenueDaily:prev.programRevenueDaily||{}, programSalesDaily:prev.programSalesDaily||{}, creativeCustDaily:prev.creativeCustDaily||{}, counsellorSalesDaily:prev.counsellorSalesDaily||{}, counsellorLeadsDaily:prev.counsellorLeadsDaily||{}, meta: Object.assign({}, prev.meta||{}, { sources: Object.assign({}, (prev.meta&&prev.meta.sources)||{}), version:'gha-v1', lastRun:new Date().toISOString(), mode: LIGHT?'light':'full' }) };
 // Mark when a full (Meta) pull is attempted so auto-escalation waits ~1h before the next one
 // (prevents hammering Meta's rate limit if a pull fails).
 if(!LIGHT) out.meta.lastFullRun = new Date().toISOString();
 
 const token=process.env.META_ACCESS_TOKEN;
+async function getConvByDate(){
+  if(!FRAPPE_SECRET) throw new Error('FRAPPE_SECRET_KEY missing');
+  const seen = Object.assign({}, prev.convSeen||{});
+  const firstRun = !(prev.meta && prev.meta.lastConvScan);
+  const since = firstRun ? (process.env.FRAPPE_CONV_BACKFILL_SINCE || daysAgo(60)) : daysAgo(3);
+  const gap = Number(process.env.FRAPPE_CONV_GAP_MS || 1500); let last = 0;
+  const sleep = ms => new Promise(r=>setTimeout(r,ms));
+  const base = FRAPPE_BASE + '/api/' + 'v8/frappe-partner/' + 'leads/' + 'list';
+  const Q = String.fromCharCode(63);
+  const UA = 'updated' + '_after';
+  const bucket = {}; let scanned=0, newConv=0, offset=0, pages=0, hitCap=false;
+  for(let p=0;p<400;p++){
+    pages++;
+    const w = last+gap-Date.now(); if(w>0) await sleep(w); last = Date.now();
+    const pp = { account:FRAPPE_ACCOUNT, limit:'200', offset:String(offset) }; pp[UA] = since;
+    const qs = new URLSearchParams(pp);
+    const r = await fetch(base + Q + qs.toString(), { headers:{ 'frappe-secret-key':FRAPPE_SECRET, 'isdecrypted':'1', 'Accept':'application/json' } });
+    if(!r.ok){ const t = await r.text().catch(()=> ''); throw new Error('Frappe conv '+r.status+': '+t.slice(0,120)); }
+    const j = await r.json(); const m = (j && j.data && j.data.data) || {}; const leads = m.leads || [];
+    for(const L of leads){
+      scanned++;
+      const sub = (L.custom_substage==null ? '' : String(L.custom_substage).split('::').pop().trim());
+      if(sub !== 'Converted') continue;
+      const id = String(L.name || L.external_id || L.mobile_no || ''); if(!id || seen[id]) continue;
+      seen[id] = 1; const src = frappeLeadSource(L.source, L.custom_source_origin); bucket[src] = (bucket[src]||0)+1; newConv++;
+    }
+    if(!m.has_more || leads.length<200){ break; } offset += 200; if(p===399) hitCap = true;
+  }
+  return { bucket, seen, scanned, newConv, firstRun, since, pages, hitCap };
+}
 async function run(name, fn, apply){ try{ const r=await fn(); apply(r); out.meta.sources[name]='ok'; console.log('['+name+'] ok'); }catch(e){ out.meta.sources[name]='error: '+e.message; console.error('['+name+'] FAILED:', e.message); } }
 
 if(!LIGHT) await run('performance', ()=>{ if(!token)throw new Error('META_ACCESS_TOKEN missing'); return getPerformance(token); },
@@ -703,7 +733,8 @@ if(!LIGHT) try{
   }
   console.log('[spend-backfill] filled '+filled+' historical day(s)');
 }catch(e){ console.log('[spend-backfill] skipped: '+e.message); }
-await run('frappeLeads', getFrappeLeads, r=>{ for(const k of ['lsqAllDaily','lsqStageDaily','lsqSourceDaily','lsqSourceConvDaily','counsellorLeadsDaily']){ if(r[k]) Object.assign(out[k]=out[k]||{}, r[k]); } out.meta.leadsPulled=r.pulled; out.meta.leadSource='frappe'; });
+await run('frappeLeads', getFrappeLeads, r=>{ for(const k of ['lsqAllDaily','lsqStageDaily','lsqSourceDaily','counsellorLeadsDaily']){ if(r[k]) Object.assign(out[k]=out[k]||{}, r[k]); } out.meta.leadsPulled=r.pulled; out.meta.leadSource='frappe'; });
+await run('convByDate', getConvByDate, r=>{ out.convSeen = r.seen; const day = TODAY, bk = out.lsqSourceConvDaily[day] = out.lsqSourceConvDaily[day] || {}; for(const s in r.bucket){ bk[s] = (bk[s]||0) + r.bucket[s]; } out.meta.lastConvScan = TODAY; out.meta.convScan = { scanned:r.scanned, newConv:r.newConv, firstRun:r.firstRun, since:r.since, pages:r.pages, hitCap:r.hitCap }; });
   await run('insightsMQL', getInsightsMQL, r=>{ out.mqlDaily=r.mqlDaily; out.mqlCityDaily=r.mqlCityDaily; out.mqlAgeDaily=r.mqlAgeDaily; out.meta.insightsScored=r.scored; out.meta.insightsPulled=r.pulled; });
 await run('shopify', getShopify, r=>{ out.shopifyDaily=r.shopifyDaily; out.meta.shopifyOrders=r.orders; });
 if(!LIGHT) await run('gokwik', getGokwik, r=>{
@@ -776,7 +807,7 @@ try {
 try {
   const KV_URL = process.env.KV_REST_API_URL, KV_TOKEN = process.env.KV_REST_API_TOKEN;
   if (KV_URL && KV_TOKEN) {
-    const SLIM = ['meta','dailyCreatives','mqlDaily','lsqAllDaily','lsqStageDaily','lsqSourceDaily','glpYesDaily','mqlCityDaily','mqlAgeDaily','programSalesDaily','programRevenueDaily','counsellorSalesDaily','counsellorLeadsDaily','creativeCustDaily','lsqSourceConvDaily'];
+    const SLIM = ['meta','dailyCreatives','mqlDaily','lsqAllDaily','lsqStageDaily','lsqSourceDaily','glpYesDaily','mqlCityDaily','mqlAgeDaily','programSalesDaily','programRevenueDaily','counsellorSalesDaily','counsellorLeadsDaily','creativeCustDaily','lsqSourceConvDaily','convSeen'];
     const slim = {}; for (const k of SLIM) slim[k] = out[k];
     const payload = JSON.stringify(slim);
     const r = await fetch(`${KV_URL}/set/${encodeURIComponent('goodflip:feed')}`, {
