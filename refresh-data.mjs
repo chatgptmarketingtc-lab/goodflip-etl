@@ -506,7 +506,7 @@ async function getProgramRevenue() {
       const _st = (row[sti] == null ? '' : row[sti].toString()).toLowerCase();
       if (_st.includes('glp drug')) continue;
       const dedupeKey = iso + '|' + (row[coi] ?? '') + '|' + (row[gi] ?? '') + '|' + net;
-      if (seen.has(dedupeKey)) { dupes++; continue; } seen.add(dedupeKey); if(isFinite(parseFloat(row[naoi]))){ const _cp=normPhone(row[coi]); if(_cp) CONV_SALES.push({ph:_cp,d:iso}); }  // guard against tab overlap
+      if (seen.has(dedupeKey)) { dupes++; continue; } seen.add(dedupeKey); if(isFinite(parseFloat(row[naoi]))){ const _cp=normPhone(row[coi]); if(_cp) CONV_SALES.push({ph:_cp,d:iso,lc:(lci>=0?progExcelIso(row[lci]):'')}); }  // guard against tab overlap
       const grossV = parseFloat(row[gi]); const gross = isFinite(grossV) ? grossV : 0;
       const listedV = parseFloat(row[lpi]); const hasDisc = isFinite(listedV) && listedV > 0 && gross > 0;
       const p = progBucket(row[thi], row[sti]);
@@ -675,8 +675,8 @@ if(!LIGHT) out.meta.lastFullRun = new Date().toISOString();
 const token=process.env.META_ACCESS_TOKEN;
 async function getConvByDate(){
   if(!FRAPPE_SECRET) throw new Error('FRAPPE_SECRET_KEY missing');
-  const firstByPhone = {};
-  for(const sa of CONV_SALES){ if(!sa || !sa.ph || !sa.d) continue; if(!firstByPhone[sa.ph] || sa.d < firstByPhone[sa.ph]) firstByPhone[sa.ph] = sa.d; }
+  const firstByPhone = {}, lcByPhone = {};
+  for(const sa of CONV_SALES){ if(!sa || !sa.ph || !sa.d) continue; if(!firstByPhone[sa.ph] || sa.d < firstByPhone[sa.ph]) firstByPhone[sa.ph] = sa.d; if(sa.lc && !lcByPhone[sa.ph]) lcByPhone[sa.ph] = sa.lc; }
   const buyers = Object.keys(firstByPhone);
   const pv = prev.phoneSrc || {};
   const phoneSrc = {};
@@ -684,30 +684,35 @@ async function getConvByDate(){
   const need = new Set(buyers.filter(ph => !phoneSrc[ph]));
   const addSrc = (ph, s) => { if(ph && s && need.has(ph)){ phoneSrc[ph] = s; need.delete(ph); } };
   for(const L of LEADS_RAW){ if(L) addSrc(L.m, L.s); }
-  let scanned = 0, pages = 0;
+  let scanned = 0, daysFetched = 0;
   if(need.size){
-    const firstRun = !(prev.meta && prev.meta.lastConvScan);
-    const since = firstRun ? (process.env.FRAPPE_CONV_BACKFILL_SINCE || daysAgo(180)) : daysAgo(7);
+    const days = {};
+    need.forEach(ph => { const lc = lcByPhone[ph]; if(lc) days[lc] = 1; });
+    const dayList = Object.keys(days).sort();
     const gap = Number(process.env.FRAPPE_CONV_GAP_MS || 1500); let last = 0;
     const sleep = ms => new Promise(r=>setTimeout(r,ms));
     const base = FRAPPE_BASE + '/api/' + 'v8/frappe-partner/' + 'leads/' + 'list';
     const Q = String.fromCharCode(63);
-    const UA = 'updated' + '_after';
-    let offset = 0;
-    for(let p=0; p<500 && need.size; p++){
-      pages++;
-      const w = last+gap-Date.now(); if(w>0) await sleep(w); last = Date.now();
-      const pp = { account:FRAPPE_ACCOUNT, limit:'200', offset:String(offset) }; pp[UA] = since;
-      const r = await fetch(base + Q + new URLSearchParams(pp).toString(), { headers:{ 'frappe-secret-key':FRAPPE_SECRET, 'isdecrypted':'1', 'Accept':'application/json' } });
-      if(!r.ok){ const t = await r.text().catch(()=> ''); throw new Error('Frappe conv '+r.status+': '+t.slice(0,120)); }
-      const j = await r.json(); const m = (j && j.data && j.data.data) || {}; const leads = m.leads || [];
-      for(const L of leads){ scanned++; addSrc(normPhone(L.mobile_no), frappeLeadSource(L.source, L.custom_source_origin)); }
-      if(!m.has_more || leads.length<200){ break; } offset += 200;
+    const CA = 'created' + '_after', CB = 'created' + '_before';
+    const nextDay = ymd => { const p = String(ymd).split('-').map(Number); const t = new Date(Date.UTC(p[0], p[1]-1, p[2])); t.setUTCDate(t.getUTCDate()+1); return t.toISOString().slice(0,10); };
+    for(const day of dayList){
+      if(!need.size) break;
+      let offset = 0;
+      for(let p=0; p<25 && need.size; p++){
+        const w = last+gap-Date.now(); if(w>0) await sleep(w); last = Date.now();
+        const pp = { account:FRAPPE_ACCOUNT, limit:'200', offset:String(offset) }; pp[CA] = day; pp[CB] = nextDay(day);
+        const r = await fetch(base + Q + new URLSearchParams(pp).toString(), { headers:{ 'frappe-secret-key':FRAPPE_SECRET, 'isdecrypted':'1', 'Accept':'application/json' } });
+        if(!r.ok){ break; }
+        const j = await r.json(); const m = (j && j.data && j.data.data) || {}; const leads = m.leads || [];
+        for(const L of leads){ scanned++; addSrc(normPhone(L.mobile_no), frappeLeadSource(L.source, L.custom_source_origin)); }
+        if(!m.has_more || leads.length<200){ break; } offset += 200;
+      }
+      daysFetched++;
     }
   }
   const conv = {}; let matched = 0, unmatched = 0;
   for(const ph of buyers){ const day = firstByPhone[ph]; const src = phoneSrc[ph] || '(unmatched)'; if(phoneSrc[ph]) matched++; else unmatched++; (conv[day] = conv[day] || {}); conv[day][src] = (conv[day][src]||0) + 1; }
-  return { conv, phoneSrc, info:{ buyers:buyers.length, matched, unmatched, scanned, pages, remaining:need.size } };
+  return { conv, phoneSrc, info:{ buyers:buyers.length, matched, unmatched, scanned, daysFetched, withLeadDate:Object.keys(lcByPhone).length, remaining:need.size } };
 }
 async function run(name, fn, apply){ try{ const r=await fn(); apply(r); out.meta.sources[name]='ok'; console.log('['+name+'] ok'); }catch(e){ out.meta.sources[name]='error: '+e.message; console.error('['+name+'] FAILED:', e.message); } }
 
