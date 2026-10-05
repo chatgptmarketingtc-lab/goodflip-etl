@@ -216,7 +216,7 @@ const FRAPPE_BASE = (process.env.FRAPPE_BASE_URL || 'https://api.mytatva.in').re
 const FRAPPE_SECRET = process.env.FRAPPE_SECRET_KEY || '';
 const FRAPPE_ACCOUNT = process.env.FRAPPE_ACCOUNT || 'GoodFlip'; const FRAPPE_MIN_GAP_MS = Number(process.env.FRAPPE_MIN_GAP_MS || 10000); let _frappeLast = 0; const _frappeSleep = ms => new Promise(r=>setTimeout(r, ms)); async function frappeGate(){ const wait = _frappeLast + FRAPPE_MIN_GAP_MS - Date.now(); if(wait>0) await _frappeSleep(wait); _frappeLast = Date.now(); }
 function normPhone(s){ if(s==null) return ''; var d=String(s).replace(/\D/g,''); return d.length>=10?d.slice(-10):''; }
-let LEADS_RAW=[];
+let LEADS_RAW=[]; let CONV_SALES=[];
 // Frappe source values -> dashboard display keys (light normalization; unknowns pass through as-is).
 const FRAPPE_SRC_MAP = { 'fb lead ads':'FB Lead Ads','whatsapp marketing':'WhatsApp Marketing','partner api':'Partner API','tata 1mg':'TATA 1MG','tata1mg':'TATA 1MG','affiliate':'Affiliate','instagram':'Instagram','webpage lead':'Webpage Lead','contact form 7':'Webpage Lead','self sourced':'Self Sourced','inbound phone call':'Inbound Phone Call','outbound phone call':'Outbound Phone Call','doc led gtm':'Doc Led GTM','customer referral':'Customer Referral','existing customer referral':'Customer Referral' };
 function frappeSource(s){ const t=(s==null?'':String(s)).trim(); if(!t) return '(no source)'; return FRAPPE_SRC_MAP[t.toLowerCase()] || t; }
@@ -253,7 +253,7 @@ async function frappeDay(day){
     if(!r.ok){ const t=await r.text().catch(()=> ''); throw new Error('Frappe '+r.status+' '+day+': '+t.slice(0,140)); }
     const j=await r.json(); const m=(j&&j.data&&j.data.data)||{}; const leads=m.leads||[];
     for(const L of leads){
-      out.count++; if(L.facebook_lead_id&&String(L.facebook_lead_id)!=='null'){out.leads.push({f:String(L.facebook_lead_id),m:normPhone(L.mobile_no),d:day});}
+      out.count++; if(L.facebook_lead_id&&String(L.facebook_lead_id)!=='null'){out.leads.push({f:String(L.facebook_lead_id),m:normPhone(L.mobile_no),d:day,s:frappeLeadSource(L.source,L.custom_source_origin)});}
       const s=frappeLeadSource(L.source, L.custom_source_origin); out.src[s]=(out.src[s]||0)+1;
       const st=(L.custom_substage==null?'':String(L.custom_substage).split('::').pop().trim()); if(st){ out.stage[st]=(out.stage[st]||0)+1; if(st==='Converted'){ out.srcConv[s]=(out.srcConv[s]||0)+1; } }
       const nm=canonCounsellor(frappeOwnerName(L.lead_owner)); if(nm){ out.owner[nm]=(out.owner[nm]||0)+1; }
@@ -422,6 +422,7 @@ function progExcelIso(v) {
   const d = new Date(v); return isNaN(d) ? '' : d.toISOString().slice(0, 10);
 }
 async function getProgramRevenue() {
+  CONV_SALES = [];
   if (!PROGRAM_REV_URL) throw new Error('PROGRAM_REVENUE_XLSX_URL secret not set');
   const XLSX = await import('xlsx');
   const cut = daysAgo(PROGRAM_REV_DAYS);
@@ -505,7 +506,7 @@ async function getProgramRevenue() {
       const _st = (row[sti] == null ? '' : row[sti].toString()).toLowerCase();
       if (_st.includes('glp drug')) continue;
       const dedupeKey = iso + '|' + (row[coi] ?? '') + '|' + (row[gi] ?? '') + '|' + net;
-      if (seen.has(dedupeKey)) { dupes++; continue; } seen.add(dedupeKey);  // guard against tab overlap
+      if (seen.has(dedupeKey)) { dupes++; continue; } seen.add(dedupeKey); if(isFinite(parseFloat(row[naoi]))){ const _cp=normPhone(row[coi]); if(_cp) CONV_SALES.push({ph:_cp,d:iso}); }  // guard against tab overlap
       const grossV = parseFloat(row[gi]); const gross = isFinite(grossV) ? grossV : 0;
       const listedV = parseFloat(row[lpi]); const hasDisc = isFinite(listedV) && listedV > 0 && gross > 0;
       const p = progBucket(row[thi], row[sti]);
@@ -666,7 +667,7 @@ const modeEnv = (process.env.REFRESH_MODE||'').toLowerCase();
 const _lastFull = (prev.meta && prev.meta.lastFullRun) ? Date.parse(prev.meta.lastFullRun) : 0;
 const _metaStale = !_lastFull || (Date.now() - _lastFull) > 55*60*1000;
 const LIGHT = (modeEnv === 'light') && !_metaStale;
-const out={ dailyCreatives:prev.dailyCreatives||{}, creativeImages:{}, mqlDaily:prev.mqlDaily||{}, lsqAllDaily:prev.lsqAllDaily||{}, lsqStageDaily:prev.lsqStageDaily||{}, lsqSourceDaily:prev.lsqSourceDaily||{}, lsqSourceConvDaily:prev.lsqSourceConvDaily||{}, convSeen:prev.convSeen||{}, glpYesDaily:prev.glpYesDaily||{}, mqlCityDaily:prev.mqlCityDaily||{}, mqlAgeDaily:prev.mqlAgeDaily||{}, shopifyDaily:prev.shopifyDaily||{}, gokwikFunnelDaily:prev.gokwikFunnelDaily||{}, gokwikAbandonedDaily:prev.gokwikAbandonedDaily||{}, programRevenueDaily:prev.programRevenueDaily||{}, programSalesDaily:prev.programSalesDaily||{}, creativeCustDaily:prev.creativeCustDaily||{}, counsellorSalesDaily:prev.counsellorSalesDaily||{}, counsellorLeadsDaily:prev.counsellorLeadsDaily||{}, meta: Object.assign({}, prev.meta||{}, { sources: Object.assign({}, (prev.meta&&prev.meta.sources)||{}), version:'gha-v1', lastRun:new Date().toISOString(), mode: LIGHT?'light':'full' }) };
+const out={ dailyCreatives:prev.dailyCreatives||{}, creativeImages:{}, mqlDaily:prev.mqlDaily||{}, lsqAllDaily:prev.lsqAllDaily||{}, lsqStageDaily:prev.lsqStageDaily||{}, lsqSourceDaily:prev.lsqSourceDaily||{}, lsqSourceConvDaily:prev.lsqSourceConvDaily||{}, phoneSrc:prev.phoneSrc||{}, glpYesDaily:prev.glpYesDaily||{}, mqlCityDaily:prev.mqlCityDaily||{}, mqlAgeDaily:prev.mqlAgeDaily||{}, shopifyDaily:prev.shopifyDaily||{}, gokwikFunnelDaily:prev.gokwikFunnelDaily||{}, gokwikAbandonedDaily:prev.gokwikAbandonedDaily||{}, programRevenueDaily:prev.programRevenueDaily||{}, programSalesDaily:prev.programSalesDaily||{}, creativeCustDaily:prev.creativeCustDaily||{}, counsellorSalesDaily:prev.counsellorSalesDaily||{}, counsellorLeadsDaily:prev.counsellorLeadsDaily||{}, meta: Object.assign({}, prev.meta||{}, { sources: Object.assign({}, (prev.meta&&prev.meta.sources)||{}), version:'gha-v1', lastRun:new Date().toISOString(), mode: LIGHT?'light':'full' }) };
 // Mark when a full (Meta) pull is attempted so auto-escalation waits ~1h before the next one
 // (prevents hammering Meta's rate limit if a pull fails).
 if(!LIGHT) out.meta.lastFullRun = new Date().toISOString();
@@ -674,33 +675,39 @@ if(!LIGHT) out.meta.lastFullRun = new Date().toISOString();
 const token=process.env.META_ACCESS_TOKEN;
 async function getConvByDate(){
   if(!FRAPPE_SECRET) throw new Error('FRAPPE_SECRET_KEY missing');
-  const seen = Object.assign({}, prev.convSeen||{});
-  const firstRun = !(prev.meta && prev.meta.lastConvScan);
-  const since = firstRun ? (process.env.FRAPPE_CONV_BACKFILL_SINCE || daysAgo(60)) : daysAgo(3);
-  const gap = Number(process.env.FRAPPE_CONV_GAP_MS || 1500); let last = 0;
-  const sleep = ms => new Promise(r=>setTimeout(r,ms));
-  const base = FRAPPE_BASE + '/api/' + 'v8/frappe-partner/' + 'leads/' + 'list';
-  const Q = String.fromCharCode(63);
-  const UA = 'updated' + '_after';
-  const bucket = {}; let scanned=0, newConv=0, offset=0, pages=0, hitCap=false;
-  for(let p=0;p<400;p++){
-    pages++;
-    const w = last+gap-Date.now(); if(w>0) await sleep(w); last = Date.now();
-    const pp = { account:FRAPPE_ACCOUNT, limit:'200', offset:String(offset) }; pp[UA] = since;
-    const qs = new URLSearchParams(pp);
-    const r = await fetch(base + Q + qs.toString(), { headers:{ 'frappe-secret-key':FRAPPE_SECRET, 'isdecrypted':'1', 'Accept':'application/json' } });
-    if(!r.ok){ const t = await r.text().catch(()=> ''); throw new Error('Frappe conv '+r.status+': '+t.slice(0,120)); }
-    const j = await r.json(); const m = (j && j.data && j.data.data) || {}; const leads = m.leads || [];
-    for(const L of leads){
-      scanned++;
-      const sub = (L.custom_substage==null ? '' : String(L.custom_substage).split('::').pop().trim());
-      if(sub !== 'Converted') continue;
-      const id = String(L.name || L.external_id || L.mobile_no || ''); if(!id || seen[id]) continue;
-      seen[id] = 1; const src = frappeLeadSource(L.source, L.custom_source_origin); bucket[src] = (bucket[src]||0)+1; newConv++;
+  const firstByPhone = {};
+  for(const sa of CONV_SALES){ if(!sa || !sa.ph || !sa.d) continue; if(!firstByPhone[sa.ph] || sa.d < firstByPhone[sa.ph]) firstByPhone[sa.ph] = sa.d; }
+  const buyers = Object.keys(firstByPhone);
+  const pv = prev.phoneSrc || {};
+  const phoneSrc = {};
+  for(const ph of buyers){ if(pv[ph]) phoneSrc[ph] = pv[ph]; }
+  const need = new Set(buyers.filter(ph => !phoneSrc[ph]));
+  const addSrc = (ph, s) => { if(ph && s && need.has(ph)){ phoneSrc[ph] = s; need.delete(ph); } };
+  for(const L of LEADS_RAW){ if(L) addSrc(L.m, L.s); }
+  let scanned = 0, pages = 0;
+  if(need.size){
+    const firstRun = !(prev.meta && prev.meta.lastConvScan);
+    const since = firstRun ? (process.env.FRAPPE_CONV_BACKFILL_SINCE || daysAgo(180)) : daysAgo(7);
+    const gap = Number(process.env.FRAPPE_CONV_GAP_MS || 1500); let last = 0;
+    const sleep = ms => new Promise(r=>setTimeout(r,ms));
+    const base = FRAPPE_BASE + '/api/' + 'v8/frappe-partner/' + 'leads/' + 'list';
+    const Q = String.fromCharCode(63);
+    const UA = 'updated' + '_after';
+    let offset = 0;
+    for(let p=0; p<500 && need.size; p++){
+      pages++;
+      const w = last+gap-Date.now(); if(w>0) await sleep(w); last = Date.now();
+      const pp = { account:FRAPPE_ACCOUNT, limit:'200', offset:String(offset) }; pp[UA] = since;
+      const r = await fetch(base + Q + new URLSearchParams(pp).toString(), { headers:{ 'frappe-secret-key':FRAPPE_SECRET, 'isdecrypted':'1', 'Accept':'application/json' } });
+      if(!r.ok){ const t = await r.text().catch(()=> ''); throw new Error('Frappe conv '+r.status+': '+t.slice(0,120)); }
+      const j = await r.json(); const m = (j && j.data && j.data.data) || {}; const leads = m.leads || [];
+      for(const L of leads){ scanned++; addSrc(normPhone(L.mobile_no), frappeLeadSource(L.source, L.custom_source_origin)); }
+      if(!m.has_more || leads.length<200){ break; } offset += 200;
     }
-    if(!m.has_more || leads.length<200){ break; } offset += 200; if(p===399) hitCap = true;
   }
-  return { bucket, seen, scanned, newConv, firstRun, since, pages, hitCap };
+  const conv = {}; let matched = 0, unmatched = 0;
+  for(const ph of buyers){ const day = firstByPhone[ph]; const src = phoneSrc[ph] || '(unmatched)'; if(phoneSrc[ph]) matched++; else unmatched++; (conv[day] = conv[day] || {}); conv[day][src] = (conv[day][src]||0) + 1; }
+  return { conv, phoneSrc, info:{ buyers:buyers.length, matched, unmatched, scanned, pages, remaining:need.size } };
 }
 async function run(name, fn, apply){ try{ const r=await fn(); apply(r); out.meta.sources[name]='ok'; console.log('['+name+'] ok'); }catch(e){ out.meta.sources[name]='error: '+e.message; console.error('['+name+'] FAILED:', e.message); } }
 
@@ -734,7 +741,6 @@ if(!LIGHT) try{
   console.log('[spend-backfill] filled '+filled+' historical day(s)');
 }catch(e){ console.log('[spend-backfill] skipped: '+e.message); }
 await run('frappeLeads', getFrappeLeads, r=>{ for(const k of ['lsqAllDaily','lsqStageDaily','lsqSourceDaily','counsellorLeadsDaily']){ if(r[k]) Object.assign(out[k]=out[k]||{}, r[k]); } out.meta.leadsPulled=r.pulled; out.meta.leadSource='frappe'; });
-await run('convByDate', getConvByDate, r=>{ out.convSeen = r.seen; const day = TODAY, bk = out.lsqSourceConvDaily[day] = out.lsqSourceConvDaily[day] || {}; for(const s in r.bucket){ bk[s] = (bk[s]||0) + r.bucket[s]; } out.meta.lastConvScan = TODAY; out.meta.convScan = { scanned:r.scanned, newConv:r.newConv, firstRun:r.firstRun, since:r.since, pages:r.pages, hitCap:r.hitCap }; });
   await run('insightsMQL', getInsightsMQL, r=>{ out.mqlDaily=r.mqlDaily; out.mqlCityDaily=r.mqlCityDaily; out.mqlAgeDaily=r.mqlAgeDaily; out.meta.insightsScored=r.scored; out.meta.insightsPulled=r.pulled; });
 await run('shopify', getShopify, r=>{ out.shopifyDaily=r.shopifyDaily; out.meta.shopifyOrders=r.orders; });
 if(!LIGHT) await run('gokwik', getGokwik, r=>{
@@ -763,6 +769,7 @@ await run('programRevenue', getProgramRevenue, r=>{
   for(const k of Object.keys(out.programSalesDaily)) if(k<cut) delete out.programSalesDaily[k];
   for(const k of Object.keys(out.counsellorSalesDaily||{})) if(k<cut) delete out.counsellorSalesDaily[k];
   for(const k of Object.keys(out.counsellorLeadsDaily||{})) if(k<cut) delete out.counsellorLeadsDaily[k];
+await run('convByDate', getConvByDate, r=>{ out.lsqSourceConvDaily = r.conv; out.phoneSrc = r.phoneSrc; out.meta.lastConvScan = TODAY; out.meta.convScan = r.info; });
 });
 
 // Renewed care-plan revenue vs monthly target (auto-pulled from the Renewal & Referral sheet). Fail-soft: a bad
@@ -807,7 +814,7 @@ try {
 try {
   const KV_URL = process.env.KV_REST_API_URL, KV_TOKEN = process.env.KV_REST_API_TOKEN;
   if (KV_URL && KV_TOKEN) {
-    const SLIM = ['meta','dailyCreatives','mqlDaily','lsqAllDaily','lsqStageDaily','lsqSourceDaily','glpYesDaily','mqlCityDaily','mqlAgeDaily','programSalesDaily','programRevenueDaily','counsellorSalesDaily','counsellorLeadsDaily','creativeCustDaily','lsqSourceConvDaily','convSeen'];
+    const SLIM = ['meta','dailyCreatives','mqlDaily','lsqAllDaily','lsqStageDaily','lsqSourceDaily','glpYesDaily','mqlCityDaily','mqlAgeDaily','programSalesDaily','programRevenueDaily','counsellorSalesDaily','counsellorLeadsDaily','creativeCustDaily','lsqSourceConvDaily','phoneSrc'];
     const slim = {}; for (const k of SLIM) slim[k] = out[k];
     const payload = JSON.stringify(slim);
     const r = await fetch(`${KV_URL}/set/${encodeURIComponent('goodflip:feed')}`, {
