@@ -769,8 +769,8 @@ await run('programRevenue', getProgramRevenue, r=>{
   for(const k of Object.keys(out.programSalesDaily)) if(k<cut) delete out.programSalesDaily[k];
   for(const k of Object.keys(out.counsellorSalesDaily||{})) if(k<cut) delete out.counsellorSalesDaily[k];
   for(const k of Object.keys(out.counsellorLeadsDaily||{})) if(k<cut) delete out.counsellorLeadsDaily[k];
-await run('convByDate', getConvByDate, r=>{ out.lsqSourceConvDaily = r.conv; out.phoneSrc = r.phoneSrc; out.meta.lastConvScan = TODAY; out.meta.convScan = r.info; });
 });
+await run('convByDate', getConvByDate, r=>{ out.lsqSourceConvDaily = r.conv; out.phoneSrc = r.phoneSrc; out.meta.lastConvScan = TODAY; out.meta.convScan = r.info; });
 
 // Renewed care-plan revenue vs monthly target (auto-pulled from the Renewal & Referral sheet). Fail-soft: a bad
 // fetch keeps the previous meta.renewal instead of blanking the tracker.
