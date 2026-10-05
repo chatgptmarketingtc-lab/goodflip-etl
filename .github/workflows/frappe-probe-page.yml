@@ -1,0 +1,28 @@
+name: frappe-probe-page
+on: [push, workflow_dispatch]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        env:
+          FRAPPE_SECRET_KEY: ${{ secrets.FRAPPE_SECRET_KEY }}
+          FRAPPE_BASE_URL: ${{ secrets.FRAPPE_BASE_URL }}
+        run: |
+          cat > p.mjs <<'EOF'
+          const BASE=(process.env.FRAPPE_BASE_URL||'https://api.mytatva.in').replace(/\/+$/,'');
+          const SEC=process.env.FRAPPE_SECRET_KEY||''; const ACC='GoodFlip';
+          const H={'frappe-secret-key':SEC,'isdecrypted':'1','Accept':'application/json'};
+          const P=BASE+'/api/'+'v8/frappe-partner/'+'leads/'+'list'; const Q=String.fromCharCode(63);
+          const UA='updated'+'_after';
+          const dAgo=n=>new Date(Date.now()-n*864e5).toISOString().slice(0,10);
+          async function L(o){const r=await fetch(P+Q+new URLSearchParams(o).toString(),{headers:H});let j=null;try{j=await r.json();}catch(e){}const m=(j&&j.data&&j.data.data)||{};return {status:r.status,total:m.total,n:(m.leads||[]).length,hm:m.has_more};}
+          (async()=>{
+            for(const w of [5,30,90,180,365]){ const o={account:ACC,limit:'200',offset:'0'}; o[UA]=dAgo(w); const r=await L(o); console.log('W'+w+' total='+r.total+' p1n='+r.n+' hm='+r.hm); }
+            const b=await L({account:ACC,limit:'200',offset:'0'}); console.log('BASE total='+b.total+' p1n='+b.n+' hm='+b.hm);
+            for(const off of [5000,7000,7200,8000,10000,20000]){ const r=await L({account:ACC,limit:'200',offset:String(off)}); console.log('BASE off'+off+' n='+r.n+' hm='+r.hm); }
+            for(const lim of ['200','500','1000']){ const r=await L({account:ACC,limit:lim,offset:'0'}); console.log('BASE lim'+lim+' n='+r.n); }
+            { const o={account:ACC,limit:'200'}; o[UA]=dAgo(365); let off=0,tot=0,pages=0,last=''; for(let p=0;p<140;p++){ o.offset=String(off); const r=await L(o); pages++; tot+=r.n; last='n'+r.n+'hm'+r.hm; if(!r.hm||r.n<200)break; off+=200; } console.log('UA365 rows='+tot+' pages='+pages+' last['+last+']'); }
+          })();
+          EOF
+          node p.mjs | tee -a "$GITHUB_STEP_SUMMARY"
