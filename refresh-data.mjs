@@ -421,6 +421,20 @@ function progExcelIso(v) {
   if (typeof v === 'number') return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 10);
   const d = new Date(v); return isNaN(d) ? '' : d.toISOString().slice(0, 10);
 }
+async function fetchSp(url){
+  const UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+  const jar={}; let current=url;
+  for(let hop=0;hop<12;hop++){
+    const ck=Object.entries(jar).map(([k,val])=>k+'='+val).join('; ');
+    const resp=await fetch(current,{ redirect:'manual', cache:'no-store', headers:Object.assign({'User-Agent':UA,'Accept':'*/*','Cache-Control':'no-cache','Pragma':'no-cache'}, ck?{'Cookie':ck}:{}) });
+    const sc=(typeof resp.headers.getSetCookie==='function')?resp.headers.getSetCookie():[];
+    for(const c of sc){ const seg=c.split(';')[0]; const i=seg.indexOf('='); if(i>0) jar[seg.slice(0,i).trim()]=seg.slice(i+1).trim(); }
+    if(resp.status>=300 && resp.status<400){ const loc=resp.headers.get('location'); if(!loc) return resp; current=new URL(loc,current).toString(); continue; }
+    return resp;
+  }
+  throw new Error('too many redirects');
+}
+
 async function getProgramRevenue() {
   CONV_SALES = [];
   if (!PROGRAM_REV_URL) throw new Error('PROGRAM_REVENUE_XLSX_URL secret not set');
@@ -433,7 +447,7 @@ async function getProgramRevenue() {
   const revUrl = PROGRAM_REV_URL + (PROGRAM_REV_URL.includes('?') ? '&' : '?') + 'nocache=' + Date.now();
   let r;
   for (let _att = 1; _att <= 4; _att++) {
-    try { r = await fetch(revUrl, { cache: 'no-store', headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' } }); break; }
+    try { r = await fetchSp(revUrl); break; }
     catch (_e) { if (_att === 4) throw new Error('revenue fetch failed after 4 attempts: ' + _e.message); console.log('[programRevenue] fetch attempt ' + _att + ' failed (' + _e.message + '), retrying in ' + (_att * 3) + 's'); await new Promise(_res => setTimeout(_res, _att * 3000)); }
   }
   if (!r.ok) { const t = await r.text().catch(() => ''); throw new Error(`SharePoint ${r.status}: ${t.slice(0, 160)}`); }
