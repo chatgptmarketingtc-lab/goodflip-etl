@@ -431,7 +431,11 @@ async function getProgramRevenue() {
   // fetching a STALE copy of the sheet and newly-entered sales would only surface ~hourly. A unique
   // query param per run defeats any URL-keyed CDN cache; no-store + no-cache headers cover the rest.
   const revUrl = PROGRAM_REV_URL + (PROGRAM_REV_URL.includes('?') ? '&' : '?') + 'nocache=' + Date.now();
-  const r = await fetch(revUrl, { cache: 'no-store', headers: { 'User-Agent': 'adradar-refresh', 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' } });
+  let r;
+  for (let _att = 1; _att <= 4; _att++) {
+    try { r = await fetch(revUrl, { cache: 'no-store', headers: { 'User-Agent': 'adradar-refresh', 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' } }); break; }
+    catch (_e) { if (_att === 4) throw new Error('revenue fetch failed after 4 attempts: ' + _e.message); console.log('[programRevenue] fetch attempt ' + _att + ' failed (' + _e.message + '), retrying in ' + (_att * 3) + 's'); await new Promise(_res => setTimeout(_res, _att * 3000)); }
+  }
   if (!r.ok) { const t = await r.text().catch(() => ''); throw new Error(`SharePoint ${r.status}: ${t.slice(0, 160)}`); }
   const ct = (r.headers.get('content-type') || '').toLowerCase();
   if (ct.includes('text/html')) throw new Error('got HTML not xlsx (share link likely no longer anonymous / login required)');
@@ -775,7 +779,7 @@ await run('programRevenue', getProgramRevenue, r=>{
   for(const k of Object.keys(out.counsellorSalesDaily||{})) if(k<cut) delete out.counsellorSalesDaily[k];
   for(const k of Object.keys(out.counsellorLeadsDaily||{})) if(k<cut) delete out.counsellorLeadsDaily[k];
 });
-await run('convByDate', getConvByDate, r=>{ out.lsqSourceConvDaily = r.conv; out.phoneSrc = r.phoneSrc; out.meta.lastConvScan = TODAY; out.meta.convScan = r.info; });
+await run('convByDate', getConvByDate, r=>{ if (r.info && r.info.buyers > 0) { out.lsqSourceConvDaily = r.conv; out.phoneSrc = r.phoneSrc; } else { out.lsqSourceConvDaily = prev.lsqSourceConvDaily || {}; out.phoneSrc = prev.phoneSrc || {}; } out.meta.lastConvScan = TODAY; out.meta.convScan = r.info; });
 
 // Renewed care-plan revenue vs monthly target (auto-pulled from the Renewal & Referral sheet). Fail-soft: a bad
 // fetch keeps the previous meta.renewal instead of blanking the tracker.
