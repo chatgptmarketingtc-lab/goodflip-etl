@@ -433,7 +433,7 @@ async function getProgramRevenue() {
   const revUrl = PROGRAM_REV_URL + (PROGRAM_REV_URL.includes('?') ? '&' : '?') + 'nocache=' + Date.now();
   let r;
   for (let _att = 1; _att <= 4; _att++) {
-    try { r = await fetch(revUrl, { cache: 'no-store', headers: { 'User-Agent': 'adradar-refresh', 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' } }); break; }
+    try { r = await fetch(revUrl, { cache: 'no-store', headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' } }); break; }
     catch (_e) { if (_att === 4) throw new Error('revenue fetch failed after 4 attempts: ' + _e.message); console.log('[programRevenue] fetch attempt ' + _att + ' failed (' + _e.message + '), retrying in ' + (_att * 3) + 's'); await new Promise(_res => setTimeout(_res, _att * 3000)); }
   }
   if (!r.ok) { const t = await r.text().catch(() => ''); throw new Error(`SharePoint ${r.status}: ${t.slice(0, 160)}`); }
@@ -547,7 +547,7 @@ async function getRenewalRevenue(){
   const XLSX = await import('xlsx');
   const base = toSpDownload(RENEWAL_URL);
   const url = base + (base.includes('?') ? '&' : '?') + 'nocache=' + Date.now();
-  const r = await fetch(url, { cache:'no-store', headers:{ 'User-Agent':'adradar-refresh', 'Cache-Control':'no-cache', 'Pragma':'no-cache' } });
+  const r = await fetch(url, { cache:'no-store', headers:{ 'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Cache-Control':'no-cache', 'Pragma':'no-cache' } });
   if(!r.ok){ const t=await r.text().catch(()=> ''); throw new Error(`renewal SharePoint ${r.status}: ${t.slice(0,120)}`); }
   if(((r.headers.get('content-type')||'').toLowerCase()).includes('text/html')) throw new Error('renewal: got HTML not xlsx (share link likely not anonymous / login required)');
   const wb = XLSX.read(Buffer.from(await r.arrayBuffer()), { cellDates:false });
