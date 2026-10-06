@@ -423,16 +423,21 @@ function progExcelIso(v) {
 }
 async function fetchSp(url){
   const UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
-  const jar={}; let current=url;
-  for(let hop=0;hop<12;hop++){
-    const ck=Object.entries(jar).map(([k,val])=>k+'='+val).join('; ');
-    const resp=await fetch(current,{ redirect:'manual', cache:'no-store', headers:Object.assign({'User-Agent':UA,'Accept':'*/*','Cache-Control':'no-cache','Pragma':'no-cache'}, ck?{'Cookie':ck}:{}) });
-    const sc=(typeof resp.headers.getSetCookie==='function')?resp.headers.getSetCookie():[];
-    for(const c of sc){ const seg=c.split(';')[0]; const i=seg.indexOf('='); if(i>0) jar[seg.slice(0,i).trim()]=seg.slice(i+1).trim(); }
-    if(resp.status>=300 && resp.status<400){ const loc=resp.headers.get('location'); if(!loc) return resp; current=new URL(loc,current).toString(); continue; }
+  const jar={};
+  async function hop(start){
+    let current=start, resp=null;
+    for(let i=0;i<14;i++){
+      const ck=Object.entries(jar).map(([k,val])=>k+'='+val).join('; ');
+      resp=await fetch(current,{ redirect:'manual', cache:'no-store', headers:Object.assign({'User-Agent':UA,'Accept':'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8','Cache-Control':'no-cache','Pragma':'no-cache'}, ck?{'Cookie':ck}:{}) });
+      const sc=(typeof resp.headers.getSetCookie==='function')?resp.headers.getSetCookie():[];
+      for(const c of sc){ const seg=c.split(';')[0]; const j=seg.indexOf('='); if(j>0) jar[seg.slice(0,j).trim()]=seg.slice(j+1).trim(); }
+      if(resp.status>=300 && resp.status<400){ const loc=resp.headers.get('location'); if(!loc) return resp; current=new URL(loc,current).toString(); continue; }
+      return resp;
+    }
     return resp;
   }
-  throw new Error('too many redirects');
+  await hop(url);
+  return await hop(url);
 }
 
 async function getProgramRevenue() {
