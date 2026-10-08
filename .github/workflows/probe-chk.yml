@@ -1,0 +1,23 @@
+name: probe-chk
+on: [push]
+jobs:
+  c:
+    runs-on: ubuntu-latest
+    steps:
+      - name: chk
+        env:
+          K: ${{ secrets.PARTNER_API_KEY }}
+          S: ${{ secrets.PARTNER_API_SECRET }}
+        run: |
+          cat > p.mjs <<'EOF'
+          import {createHash} from 'crypto';
+          const h=x=>createHash('sha256').update(x,'utf8').digest('hex');
+          const K=process.env.K||'', S=process.env.S||'';
+          console.log('KEY_SHA256 '+h(K));
+          console.log('SECRET_SHA256 '+h(S));
+          const url='https'+'://'+'one.tatvacare.in'+'/api/method/tatva_connect.api.partner.lead_schema';
+          try{ const r=await fetch(url,{headers:{'Authorization':'token '+K+':'+S}}); const t=await r.text(); console.log('STATUS '+r.status); let j=null; try{j=JSON.parse(t);}catch(e){}
+            if(j&&j.data){ const d=j.data; const nf=(d.fields||[]).length; const ch=Object.keys(d.children||d.sections||{}); console.log('FIELDS '+nf+'  SECTIONS '+ch.join(',')); }
+            else { console.log('BODY '+t.slice(0,250)); } }catch(e){ console.log('THREW '+e.message); }
+          EOF
+          node p.mjs | tee -a "$GITHUB_STEP_SUMMARY"
