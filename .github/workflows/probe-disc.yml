@@ -13,22 +13,15 @@ jobs:
           const K=process.env.K||'', S=process.env.S||'';
           const auth='token '+K+':'+S;
           const B='https'+'://'+'one.tatvacare.in'+'/api/method/tatva_connect.api.partner.';
-          const body={created_after:'2026-10-01 00:00:00', limit:5, offset:0};
-          const r=await fetch(B+'lead_get_bulk',{method:'POST',headers:{Authorization:auth,'Content-Type':'application/json'},body:JSON.stringify(body)});
-          const gb=await r.json();
-          console.log('STATUS '+r.status+'  TOPKEYS '+Object.keys(gb).join(','));
-          console.log('PAGING '+JSON.stringify(gb.paging||{}));
-          const res=gb.results||[];
-          console.log('RESULTS '+res.length);
-          const leads=res.map(x=>x.lead||x.data||x).filter(x=>x&&typeof x==='object');
-          console.log('LEADS '+leads.length);
-          for(const L0 of leads.slice(0,2)){
-            const Lx=JSON.parse(JSON.stringify(L0));
-            for(const k of ['mobile_no','first_name','last_name','full_name','email','custom_patient_id']) if(k in Lx) Lx[k]='X';
-            const top={name:Lx.name,creation:Lx.creation,source:Lx.source,src_origin:Lx.custom_source_origin,age:Lx.custom_age_group,bmi:Lx.custom_bmi,city:Lx.custom_city,cond:Lx.custom_condition,substage:Lx.custom_substage,fb:Lx.facebook_lead_id,owner:Lx.lead_owner};
-            console.log(''); console.log('LEAD_TOP '+JSON.stringify(top));
-            const acq=Lx.custom_acquisition_profile; console.log('ACQ '+JSON.stringify(Array.isArray(acq)?acq[0]:acq).slice(0,400));
-            const sa=Lx.custom_screening_answers||[]; console.log('SCREENING ('+sa.length+'):'); for(const q of sa) console.log('   q='+q.question+' | '+String(q.label).slice(0,40)+' => '+String(q.value).slice(0,60));
-          }
+          async function page(off){ const r=await fetch(B+'lead_get_bulk',{method:'POST',headers:{Authorization:auth,'Content-Type':'application/json'},body:JSON.stringify({created_after:'2026-10-01 00:00:00',limit:200,offset:off})}); const j=await r.json(); return j.results||[]; }
+          let leads=[]; for(const off of [0,200,400,600]){ const p=await page(off); leads=leads.concat(p); if(p.length<200) break; }
+          console.log('SCANNED '+leads.length);
+          const qk={}; const dis={}; const src={};
+          const dz=l=>{ const a=l.custom_acquisition_profile; const o=Array.isArray(a)?a[0]:a; return (o&&o.utm_disease)||''; };
+          for(const l of leads){ dis[dz(l)||'(blank)']=(dis[dz(l)||'(blank)']||0)+1; src[l.source||'(blank)']=(src[l.source||'(blank)']||0)+1; for(const q of (l.custom_screening_answers||[])){ if(!qk[q.question]) qk[q.question]={n:0,v:new Set()}; qk[q.question].n++; if(qk[q.question].v.size<4) qk[q.question].v.add(String(q.value).slice(0,40)); } }
+          console.log(''); console.log('=== SCREENING QUESTION KEYS ==='); const keys=Object.keys(qk).sort((a,b)=>qk[b].n-qk[a].n); for(const k of keys){ console.log(qk[k].n+'  '+k.slice(0,70)+'  :: '+[...qk[k].v].join(' | ')); }
+          console.log(''); console.log('UTM_DISEASE '+JSON.stringify(dis));
+          console.log('SOURCE '+JSON.stringify(src));
+          for(const want of ['Diabetes','Obesity','Lifestyle/Obesity']){ const l=leads.find(x=>dz(x)===want); if(l){ console.log(''); console.log('=== SAMPLE '+want+' screening ==='); for(const q of (l.custom_screening_answers||[])) console.log('  '+q.question.slice(0,60)+' => '+String(q.value).slice(0,50)); console.log('  BMI_top='+l.custom_bmi+' age_top='+l.custom_age_group); } }
           EOF
           node p.mjs | tee -a "$GITHUB_STEP_SUMMARY"
