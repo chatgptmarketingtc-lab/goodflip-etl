@@ -10,19 +10,26 @@ jobs:
           S: ${{ secrets.PARTNER_API_SECRET }}
         run: |
           cat > p.mjs <<'EOF'
-          const K=process.env.K||'', S=process.env.S||'';
-          const auth='token '+K+':'+S;
+          const K=process.env.K||'', S=process.env.S||''; const auth='token '+K+':'+S;
           const B='https'+'://'+'one.tatvacare.in'+'/api/method/tatva_connect.api.partner.';
-          async function page(off){ const r=await fetch(B+'lead_get_bulk',{method:'POST',headers:{Authorization:auth,'Content-Type':'application/json'},body:JSON.stringify({created_after:'2026-10-01 00:00:00',limit:200,offset:off})}); const j=await r.json(); return j.results||[]; }
-          let leads=[]; for(const off of [0,200,400,600]){ const p=await page(off); leads=leads.concat(p); if(p.length<200) break; }
-          leads=leads.map(x=>x.lead||x.data||x);
-          console.log('SCANNED '+leads.length);
-          const qk={}; const dis={}; const src={};
-          const dz=l=>{ const a=l.custom_acquisition_profile; const o=Array.isArray(a)?a[0]:a; return (o&&o.utm_disease)||''; };
-          for(const l of leads){ dis[dz(l)||'(blank)']=(dis[dz(l)||'(blank)']||0)+1; src[l.source||'(blank)']=(src[l.source||'(blank)']||0)+1; for(const q of (l.custom_screening_answers||[])){ if(!qk[q.question]) qk[q.question]={n:0,v:new Set()}; qk[q.question].n++; if(qk[q.question].v.size<4) qk[q.question].v.add(String(q.value).slice(0,40)); } }
-          console.log(''); console.log('=== SCREENING QUESTION KEYS ==='); const keys=Object.keys(qk).sort((a,b)=>qk[b].n-qk[a].n); for(const k of keys){ console.log(qk[k].n+'  '+k.slice(0,70)+'  :: '+[...qk[k].v].join(' | ')); }
-          console.log(''); console.log('UTM_DISEASE '+JSON.stringify(dis));
-          console.log('SOURCE '+JSON.stringify(src));
-          for(const want of ['Diabetes','Obesity','Lifestyle/Obesity']){ const l=leads.find(x=>dz(x)===want); if(l){ console.log(''); console.log('=== SAMPLE '+want+' screening ==='); for(const q of (l.custom_screening_answers||[])) console.log('  '+q.question.slice(0,60)+' => '+String(q.value).slice(0,50)); console.log('  BMI_top='+l.custom_bmi+' age_top='+l.custom_age_group); } }
+          const CITIES='mumbai,bombay,navi mumbai,thane,vasai,kalyan,dombivli,dahisar,panvel,delhi,najafgarh,dwarka,rohini,gurugram,gurgaon,noida,greater noida,ghaziabad,gaziabad,indirapuram,faridabad,bengaluru,bangalore,banglore,bangaluru,bengalore,hyderabad,secunderabad,chennai,madras,pune,pimpri-chinchwad,pcmc,kolkata,calcutta,howrah,madhyamgram,barrackpore,ahmedabad,gandhinagar,lucknow,chandigarh,mohali,panchkula,jaipur,indore,kochi,cochin,ernakulam,nagpur,bhubaneswar,meerut'.split(',');
+          const getProg=d=>{d=String(d||'').toLowerCase();if(d.includes('pre-diab')||d.includes('pre_diab'))return'prediab';if(d.includes('glp'))return'glp1';if(d.includes('diab'))return'diab';if(d.includes('obesit')||d.includes('weight'))return'obese';if(d.includes('pcos'))return'pcos';return null;};
+          const cityQ=c=>{if(!c||!String(c).trim())return null;c=String(c).toLowerCase();for(const q of CITIES){if(q&&(c.includes(q)||q.includes(c)))return true;}return false;};
+          const diabAge=a=>{a=String(a||'').toLowerCase();if(a.includes('under'))return true;if(a.includes('25')&&a.includes('30'))return true;if(a.includes('60+')||a.includes('61-65')||a.includes('65+'))return true;return false;};
+          const yo=a=>{a=String(a||'').toLowerCase();return a.includes('under')||a.includes('60+')||a.includes('61-65')||a.includes('65+');};
+          const payBad=p=>{p=String(p||'').toLowerCase().trim();return p===''||p.includes('not_at_this_time')||p.includes('not at this time')||p.startsWith('no,')||p.startsWith('no ');};
+          const hbaFail=h=>{h=String(h||'').toLowerCase().trim();return h===''||h.includes('don')||h.includes('unknown')||h.includes('below_5.7')||h.includes('below 5.7')||h.includes('normal')||h.includes('below7.5');};
+          const bmiOk=b=>String(b||'').toLowerCase().includes('obese');
+          function score(prog,age,city,hba1c,pay,bmi){if(!prog)return null;let f=0;const cq=cityQ(city);if(prog==='diab'){if(diabAge(age))f++;if(cq===false)f++;if(hbaFail(hba1c))f++;if(payBad(pay))f++;}else if(prog==='obese'){if(yo(age))f++;if(cq===false)f++;if(!bmiOk(bmi))f++;if(payBad(pay))f++;}else if(prog==='glp1'){if(yo(age))f++;if(cq===false)f++;if(payBad(pay))f++;}else if(prog==='prediab'){if(String(age||'').includes('60+'))f++;if(cq===false)f++;if(payBad(pay))f++;}else if(prog==='pcos'){if(cq===false)f++;if(payBad(pay))f++;}if(f)return'FAIL';if(cq===null)return'REVIEW';return'PASS';}
+          async function page(off){const r=await fetch(B+'lead_get_bulk',{method:'POST',headers:{Authorization:auth,'Content-Type':'application/json'},body:JSON.stringify({created_after:'2026-10-01 00:00:00',created_before:'2026-10-08 00:00:00',limit:200,offset:off})});const j=await r.json();return j.results||[];}
+          let raw=[]; for(let off=0;off<4000;off+=200){const p=await page(off);raw=raw.concat(p);if(p.length<200)break;}
+          const leads=raw.map(x=>x.lead||x.data||x);
+          const agg={}; let unscored=0;
+          const sv=(sa,sub)=>{const q=(sa||[]).find(x=>String(x.question||'').toLowerCase().includes(sub));return q?q.value:'';};
+          for(const l of leads){const acq=Array.isArray(l.custom_acquisition_profile)?l.custom_acquisition_profile[0]:l.custom_acquisition_profile;const prog=getProg(acq&&acq.utm_disease);if(!prog){unscored++;continue;}const sa=l.custom_screening_answers||[];const age=sv(sa,'age_group');const hba1c=sv(sa,'hba1c');const bmi=sv(sa,'bmi');let pay=sv(sa,'open_to_investing')||sv(sa,'investment_interest')||sv(sa,'program_interest')||sv(sa,'payment_interest')||sv(sa,'glp_investment');const city=l.custom_city||sv(sa,'city');const st=score(prog,age,city,hba1c,pay,bmi);agg[prog]=agg[prog]||{t:0,PASS:0,FAIL:0,REVIEW:0};agg[prog].t++;agg[prog][st]++;}
+          console.log('TOTAL '+leads.length+'  UNSCORED '+unscored);
+          let tm=0,tt=0;
+          for(const k of ['diab','obese','glp1','prediab','pcos']){const a=agg[k];if(!a)continue;tt+=a.t;tm+=a.PASS;console.log(k+'  total='+a.t+' MQL='+a.PASS+' FAIL='+a.FAIL+' REVIEW='+a.REVIEW+' ('+(a.PASS/a.t*100).toFixed(1)+'%)');}
+          console.log('OVERALL scored='+tt+' MQL='+tm);
           EOF
           node p.mjs | tee -a "$GITHUB_STEP_SUMMARY"
