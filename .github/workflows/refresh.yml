@@ -44,6 +44,8 @@ jobs:
           FRAPPE_INSIGHTS_URL: ${{ secrets.FRAPPE_INSIGHTS_URL }}
           FRAPPE_ACCOUNT: ${{ secrets.FRAPPE_ACCOUNT }}
           FRAPPE_BASE_URL: ${{ secrets.FRAPPE_BASE_URL }}
+          PARTNER_API_KEY: ${{ secrets.PARTNER_API_KEY }}
+          PARTNER_API_SECRET: ${{ secrets.PARTNER_API_SECRET }}
           BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
           KV_REST_API_URL: ${{ secrets.KV_REST_API_URL }}
           KV_REST_API_TOKEN: ${{ secrets.KV_REST_API_TOKEN }}
