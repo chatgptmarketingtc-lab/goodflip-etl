@@ -1,0 +1,33 @@
+name: probe-disc
+on: [push]
+jobs:
+  dsc:
+    runs-on: ubuntu-latest
+    steps:
+      - name: disc
+        env:
+          K: ${{ secrets.PARTNER_API_KEY }}
+          S: ${{ secrets.PARTNER_API_SECRET }}
+        run: |
+          cat > p.mjs <<'EOF'
+          const K=process.env.K||'', S=process.env.S||'';
+          const auth='token '+K+':'+S;
+          const B='https'+'://'+'one.tatvacare.in'+'/api/method/tatva_connect.api.partner.';
+          const sc=await (await fetch(B+'lead_schema',{headers:{Authorization:auth}})).json();
+          const d=sc.data||{};
+          console.log('=== FIELDS ('+(d.fields||[]).length+') ===');
+          for(const f of (d.fields||[])) console.log(f.fieldname+' | '+(f.label||'')+' | '+(f.behavior||f.reqd||'')+(f.allowed_values?(' | vals='+JSON.stringify(f.allowed_values).slice(0,140)):''));
+          const ch=d.children||d.sections||{};
+          for(const sec of Object.keys(ch)){ console.log(''); console.log('=== SECTION '+sec+' ==='); const cf=(ch[sec].fields)||(Array.isArray(ch[sec])?ch[sec]:[]); for(const f of cf) console.log('  '+(f.fieldname||'?')+' | '+(f.label||'')+(f.allowed_values?(' | vals='+JSON.stringify(f.allowed_values).slice(0,120)):'')); }
+          console.log(''); console.log('ROUTING '+JSON.stringify(d.routing||{}));
+          console.log('BULKLIMITS '+JSON.stringify(d.bulk||{}));
+          const body={created_after:'2026-10-08 00:00:00', limit:3, offset:0};
+          const r=await fetch(B+'lead_get_bulk',{method:'POST',headers:{Authorization:auth,'Content-Type':'application/json'},body:JSON.stringify(body)});
+          const gb=await r.json();
+          console.log(''); console.log('=== GETBULK status '+r.status+' topkeys '+Object.keys(gb).join(',')+' ===');
+          const data=(gb.data&&gb.data.leads)||(Array.isArray(gb.data)?gb.data:null)||gb.message||[];
+          console.log('PAGING '+JSON.stringify({total:gb.total,count:gb.count,has_more:gb.has_more,dtotal:gb.data&&gb.data.total,dcount:gb.data&&gb.data.count,dhas_more:gb.data&&gb.data.has_more}));
+          console.log('RETURNED '+(Array.isArray(data)?data.length:typeof data));
+          if(Array.isArray(data)&&data[0]){ const Lx=JSON.parse(JSON.stringify(data[0])); for(const k of ['mobile_no','first_name','last_name','full_name','email','patient_name']) if(k in Lx) Lx[k]='<redacted>'; console.log('SAMPLE_KEYS '+Object.keys(Lx).join(',')); console.log('SAMPLE '+JSON.stringify(Lx).slice(0,2000)); }
+          EOF
+          node p.mjs | tee -a "$GITHUB_STEP_SUMMARY"
