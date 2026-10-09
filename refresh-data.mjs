@@ -809,6 +809,88 @@ const dates=Object.keys(out.dailyCreatives).sort();
 out.meta.dateRange={ min:dates[0]||'', max:dates[dates.length-1]||'' };
 // Keep the dashboard's current day (perfWindow.until) advancing every run in IST, even on light runs.
 out.meta.perfWindow = Object.assign({ since: daysAgo(PERF_DAYS) }, out.meta.perfWindow || {}, { until: TODAY });
+
+// ---------- Partner API leads + MQL (tatva_connect lead_get_bulk) ----------
+// Schema-driven partner endpoint. One call returns each lead PLUS its child tables
+// (acquisition profile + screening answers), so MQL, therapy-area and source splits
+// come straight from source. ADDITIVE: writes partner* keys only; the existing
+// frappeLeads / insightsMQL / convByDate sources are left untouched as fallback until
+// the dashboards are cut over. Reconciled to the LSQ export (Oct 1-7: 723 vs 716 MQL,
+// <1%). Counts only -> no PII in the feed. Gated to full runs (heavier paged pull).
+const PARTNER_DAYS = 80;
+async function getPartnerLeads(){
+  const K = process.env.PARTNER_API_KEY || '', S = process.env.PARTNER_API_SECRET || '';
+  if(!K || !S) throw new Error('PARTNER_API_KEY / PARTNER_API_SECRET missing');
+  const BASE = 'https'+'://'+'one.tatvacare.in'+'/api/method/tatva_connect.api.partner.lead_get_bulk';
+  const auth = 'token '+K+':'+S;
+  const CQ = ['mumbai','bombay','navi mumbai','thane','vasai','kalyan','dombivli','dahisar','panvel','delhi','new delhi','najafgarh','dwarka','rohini','gurugram','gurgaon','noida','greater noida','ghaziabad','gaziabad','indirapuram','faridabad','bengaluru','bangalore','banglore','bangaluru','bengalore','hyderabad','secunderabad','chennai','madras','pune','pimpri-chinchwad','pcmc','kolkata','calcutta','howrah','madhyamgram','barrackpore','ahmedabad','gandhinagar','lucknow','chandigarh','mohali','panchkula','jaipur','indore','kochi','cochin','ernakulam','nagpur','bhubaneswar','meerut'];
+  const getProg = d => { d=String(d||'').toLowerCase();
+    if(d.includes('pre-diab')||d.includes('pre_diab'))return 'Pre-Diabetes';
+    if(d.includes('glp'))return 'GLP-1';
+    if(d.includes('diab'))return 'Diabetes';
+    if(d.includes('obesit')||d.includes('weight'))return 'Obesity';
+    if(d.includes('pcos'))return 'PCOS'; return null; };
+  const cityQ = c => { if(!c||!String(c).trim())return null; c=String(c).toLowerCase();
+    for(const q of CQ){ if(q&&(c.includes(q)||q.includes(c)))return true; } return false; };
+  const diabAge = a => { a=String(a||'').toLowerCase();
+    if(a.includes('under'))return true; if(a.includes('25')&&a.includes('30'))return true;
+    if(a.includes('60+')||a.includes('61-65')||a.includes('65+'))return true; return false; };
+  const yo = a => { a=String(a||'').toLowerCase();
+    return a.includes('under')||a.includes('60+')||a.includes('61-65')||a.includes('65+'); };
+  const payBad = p => { p=String(p||'').toLowerCase().trim();
+    return p===''||p.includes('not_at_this_time')||p.includes('not at this time')||p.startsWith('no,')||p.startsWith('no '); };
+  const hbaFail = h => { h=String(h||'').toLowerCase().trim();
+    return h===''||h.includes('don')||h.includes('unknown')||h.includes('below_5.7')||h.includes('below 5.7')||h.includes('normal')||h.includes('below7.5'); };
+  const bmiOk = b => String(b||'').toLowerCase().includes('obese');
+  function pscore(prog,age,city,hba1c,pay,bmi){ if(!prog)return null; let f=0; const cq=cityQ(city);
+    if(prog==='Diabetes'){ if(diabAge(age))f++; if(cq===false)f++; if(hbaFail(hba1c))f++; if(payBad(pay))f++; }
+    else if(prog==='Obesity'){ if(yo(age))f++; if(cq===false)f++; if(!bmiOk(bmi))f++; if(payBad(pay))f++; }
+    else if(prog==='GLP-1'){ if(yo(age))f++; if(cq===false)f++; if(payBad(pay))f++; }
+    else if(prog==='Pre-Diabetes'){ if(String(age||'').includes('60+'))f++; if(cq===false)f++; if(payBad(pay))f++; }
+    else if(prog==='PCOS'){ if(cq===false)f++; if(payBad(pay))f++; }
+    if(f)return 'fl'; if(cq===null)return 'rv'; return 'pa'; }
+  const sv=(sa,sub)=>{ const q=(sa||[]).find(x=>String(x.question||'').toLowerCase().includes(sub)); return q?q.value:''; };
+  const since=daysAgo(PARTNER_DAYS), until=TODAY;
+  async function pageAt(off){
+    for(let attempt=0; attempt<3; attempt++){
+      const r=await fetch(BASE,{method:'POST',headers:{Authorization:auth,'Content-Type':'application/json'},
+        body:JSON.stringify({created_after:since+' 00:00:00',created_before:until+' 23:59:59',limit:200,offset:off})});
+      if(r.ok){ const j=await r.json(); return j.results||[]; }
+      if(r.status===429||r.status>=500){ await new Promise(s=>setTimeout(s,3000*(attempt+1))); continue; }
+      const tx=await r.text().catch(()=>''); throw new Error('partner '+r.status+': '+tx.slice(0,160));
+    }
+    throw new Error('partner retries exhausted at offset '+off);
+  }
+  let raw=[]; for(let off=0; off<40000; off+=200){ const p=await pageAt(off); raw=raw.concat(p); if(p.length<200)break; }
+  const leads=raw.map(x=>x.lead||x.data||x);
+  const mqlDaily={}, leadsDaily={}, therapyDaily={}, sourceDaily={};
+  for(const l of leads){
+    const co=String(l.creation||'').slice(0,10); if(!co||co<since||co>until)continue;
+    leadsDaily[co]=(leadsDaily[co]||0)+1;
+    const src=(l.source||'(blank)').toString().trim()||'(blank)';
+    (sourceDaily[co]=sourceDaily[co]||{}); sourceDaily[co][src]=(sourceDaily[co][src]||0)+1;
+    const acq=Array.isArray(l.custom_acquisition_profile)?l.custom_acquisition_profile[0]:l.custom_acquisition_profile;
+    const prog=getProg(acq&&acq.utm_disease); if(!prog)continue;
+    (therapyDaily[co]=therapyDaily[co]||{}); therapyDaily[co][prog]=(therapyDaily[co][prog]||0)+1;
+    const sa=l.custom_screening_answers||[];
+    const st=pscore(prog, sv(sa,'age_group'), l.custom_city||sv(sa,'city'), sv(sa,'hba1c'),
+      sv(sa,'open_to_investing')||sv(sa,'investment_interest')||sv(sa,'program_interest'), sv(sa,'bmi'));
+    (mqlDaily[co]=mqlDaily[co]||{}); (mqlDaily[co][prog]=mqlDaily[co][prog]||{t:0,pa:0,fl:0,rv:0});
+    const c=mqlDaily[co][prog]; c.t++; c[st]++;
+  }
+  return { partnerMqlDaily:mqlDaily, partnerLeadsDaily:leadsDaily, partnerTherapyDaily:therapyDaily,
+    partnerSourceDaily:sourceDaily, info:{ pulled:leads.length, window:{since,until} } };
+}
+for(const _k of ['partnerMqlDaily','partnerLeadsDaily','partnerTherapyDaily','partnerSourceDaily']) out[_k]=out[_k]||prev[_k]||{};
+if(!LIGHT) await run('partnerLeads', getPartnerLeads, r=>{
+  for(const k of ['partnerMqlDaily','partnerLeadsDaily','partnerTherapyDaily','partnerSourceDaily']){
+    out[k]=Object.assign(out[k]||prev[k]||{}, r[k]); }
+  out.meta.partner=r.info;
+  const cut=daysAgo(400);
+  for(const key of ['partnerMqlDaily','partnerLeadsDaily','partnerTherapyDaily','partnerSourceDaily'])
+    for(const d of Object.keys(out[key]||{})) if(d<cut) delete out[key][d];
+});
+
 writeFileSync('data.json', JSON.stringify(out));
 delete out.meta.sources.mql; // drop stale legacy LSQ 'mql' key carried from prev feed
 console.log('Wrote data.json ['+(out.meta.mode||'full')+'] | perf dates:', dates.length, '| sources:', JSON.stringify(out.meta.sources));
