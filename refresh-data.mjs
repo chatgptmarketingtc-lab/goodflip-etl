@@ -863,7 +863,7 @@ async function getPartnerLeads(){
   }
   let raw=[]; for(let off=0; off<40000; off+=200){ const p=await pageAt(off); raw=raw.concat(p); if(p.length<200)break; }
   const leads=raw.map(x=>x.lead||x.data||x);
-  const mqlDaily={}, leadsDaily={}, therapyDaily={}, sourceDaily={};
+  const mqlDaily={}, leadsDaily={}, therapyDaily={}, sourceDaily={}, cityDaily={}, ageDaily={};
   for(const l of leads){
     const co=String(l.creation||'').slice(0,10); if(!co||co<since||co>until)continue;
     leadsDaily[co]=(leadsDaily[co]||0)+1;
@@ -876,18 +876,18 @@ async function getPartnerLeads(){
     const st=pscore(prog, sv(sa,'age_group'), l.custom_city||sv(sa,'city'), sv(sa,'hba1c'),
       sv(sa,'open_to_investing')||sv(sa,'investment_interest')||sv(sa,'program_interest'), sv(sa,'bmi'));
     (mqlDaily[co]=mqlDaily[co]||{}); (mqlDaily[co][prog]=mqlDaily[co][prog]||{t:0,pa:0,fl:0,rv:0});
-    const c=mqlDaily[co][prog]; c.t++; c[st]++;
+    const c=mqlDaily[co][prog]; c.t++; c[st]++; if(st==='pa'){const cty=((l.custom_city||sv(sa,'city')||'(blank)')+'').trim()||'(blank)'; const ag=((sv(sa,'age_group')||'(blank)')+'').trim()||'(blank)'; (cityDaily[co]=cityDaily[co]||{}); cityDaily[co][cty]=(cityDaily[co][cty]||0)+1; (ageDaily[co]=ageDaily[co]||{}); ageDaily[co][ag]=(ageDaily[co][ag]||0)+1;}
   }
   return { partnerMqlDaily:mqlDaily, partnerLeadsDaily:leadsDaily, partnerTherapyDaily:therapyDaily,
-    partnerSourceDaily:sourceDaily, info:{ pulled:leads.length, window:{since,until} } };
+    partnerSourceDaily:sourceDaily, partnerMqlCityDaily:cityDaily, partnerMqlAgeDaily:ageDaily, info:{ pulled:leads.length, window:{since,until} } };
 }
-for(const _k of ['partnerMqlDaily','partnerLeadsDaily','partnerTherapyDaily','partnerSourceDaily']) out[_k]=out[_k]||prev[_k]||{};
+for(const _k of ['partnerMqlDaily','partnerLeadsDaily','partnerTherapyDaily','partnerSourceDaily','partnerMqlCityDaily','partnerMqlAgeDaily']) out[_k]=out[_k]||prev[_k]||{};
 if(!LIGHT) await run('partnerLeads', getPartnerLeads, r=>{
-  for(const k of ['partnerMqlDaily','partnerLeadsDaily','partnerTherapyDaily','partnerSourceDaily']){
+  for(const k of ['partnerMqlDaily','partnerLeadsDaily','partnerTherapyDaily','partnerSourceDaily','partnerMqlCityDaily','partnerMqlAgeDaily']){
     out[k]=Object.assign(out[k]||prev[k]||{}, r[k]); }
   out.meta.partner=r.info;
   const cut=daysAgo(400);
-  for(const key of ['partnerMqlDaily','partnerLeadsDaily','partnerTherapyDaily','partnerSourceDaily'])
+  for(const key of ['partnerMqlDaily','partnerLeadsDaily','partnerTherapyDaily','partnerSourceDaily','partnerMqlCityDaily','partnerMqlAgeDaily'])
     for(const d of Object.keys(out[key]||{})) if(d<cut) delete out[key][d];
 });
 
@@ -924,7 +924,7 @@ try {
 try {
   const KV_URL = process.env.KV_REST_API_URL, KV_TOKEN = process.env.KV_REST_API_TOKEN;
   if (KV_URL && KV_TOKEN) {
-    const SLIM = ['meta','dailyCreatives','mqlDaily','lsqAllDaily','lsqStageDaily','lsqSourceDaily','glpYesDaily','mqlCityDaily','mqlAgeDaily','programSalesDaily','programRevenueDaily','counsellorSalesDaily','counsellorLeadsDaily','creativeCustDaily','lsqSourceConvDaily','phoneSrc'];
+    const SLIM = ['meta','dailyCreatives','mqlDaily','lsqAllDaily','lsqStageDaily','lsqSourceDaily','glpYesDaily','mqlCityDaily','mqlAgeDaily','programSalesDaily','programRevenueDaily','counsellorSalesDaily','counsellorLeadsDaily','creativeCustDaily','lsqSourceConvDaily','phoneSrc','partnerMqlDaily','partnerLeadsDaily','partnerTherapyDaily','partnerSourceDaily','partnerMqlCityDaily','partnerMqlAgeDaily'];
     const slim = {}; for (const k of SLIM) slim[k] = out[k];
     const payload = JSON.stringify(slim);
     const r = await fetch(`${KV_URL}/set/${encodeURIComponent('goodflip:feed')}`, {
