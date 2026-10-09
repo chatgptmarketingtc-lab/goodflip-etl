@@ -15,6 +15,7 @@ jobs:
           const B='https'+'://'+'one.tatvacare.in'+'/api/method/tatva_connect.api.partner.';
           async function page(off){ const r=await fetch(B+'lead_get_bulk',{method:'POST',headers:{Authorization:auth,'Content-Type':'application/json'},body:JSON.stringify({created_after:'2026-10-01 00:00:00',limit:200,offset:off})}); const j=await r.json(); return j.results||[]; }
           let leads=[]; for(const off of [0,200,400,600]){ const p=await page(off); leads=leads.concat(p); if(p.length<200) break; }
+          leads=leads.map(x=>x.lead||x.data||x);
           console.log('SCANNED '+leads.length);
           const qk={}; const dis={}; const src={};
           const dz=l=>{ const a=l.custom_acquisition_profile; const o=Array.isArray(a)?a[0]:a; return (o&&o.utm_disease)||''; };
