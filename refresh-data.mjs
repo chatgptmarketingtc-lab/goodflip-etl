@@ -850,6 +850,7 @@ async function getPartnerLeads(){
     else if(prog==='PCOS'){ if(cq===false)f++; if(payBad(pay))f++; }
     if(f)return 'fl'; if(cq===null)return 'rv'; return 'pa'; }
   const sv=(sa,sub)=>{ const q=(sa||[]).find(x=>String(x.question||'').toLowerCase().includes(sub)); return q?q.value:''; };
+  const SRC_OK=new Set(['fb lead ads','facebook','whatsapp marketing','whatsapp_reactivation','webpage lead','tata 1mg','tata1mg','glp landing page','instagram dm','instagram']);
   const since=daysAgo(PARTNER_DAYS), until=TODAY;
   async function pageAt(off){
     for(let attempt=0; attempt<3; attempt++){
@@ -866,6 +867,7 @@ async function getPartnerLeads(){
   const mqlDaily={}, leadsDaily={}, therapyDaily={}, sourceDaily={}, cityDaily={}, ageDaily={};
   for(const l of leads){
     const co=String(l.creation||'').slice(0,10); if(!co||co<since||co>until)continue;
+    const _src=(l.source||'').toString().trim().toLowerCase(); if(!SRC_OK.has(_src)) continue;
     leadsDaily[co]=(leadsDaily[co]||0)+1;
     const src=(l.source||'(blank)').toString().trim()||'(blank)';
     (sourceDaily[co]=sourceDaily[co]||{}); sourceDaily[co][src]=(sourceDaily[co][src]||0)+1;
