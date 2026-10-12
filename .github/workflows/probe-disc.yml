@@ -12,24 +12,17 @@ jobs:
           cat > p.mjs <<'EOF'
           const K=process.env.K||'', S=process.env.S||''; const auth='token '+K+':'+S;
           const B='https'+'://'+'one.tatvacare.in'+'/api/method/tatva_connect.api.partner.';
-          async function page(off){const r=await fetch(B+'lead_get_bulk',{method:'POST',headers:{Authorization:auth,'Content-Type':'application/json'},body:JSON.stringify({created_after:'2026-10-01 00:00:00',created_before:'2026-10-12 00:00:00',limit:200,offset:off})});if(!r.ok){console.log('HTTP',r.status);return [];}const j=await r.json();return j.results||[];}
-          let raw=[]; for(let off=0;off<2000;off+=200){const p=await page(off);raw=raw.concat(p);if(p.length<200)break;}
+          async function page(off){const r=await fetch(B+'lead_get_bulk',{method:'POST',headers:{Authorization:auth,'Content-Type':'application/json'},body:JSON.stringify({created_after:'2026-09-20 00:00:00',created_before:'2026-10-12 00:00:00',limit:200,offset:off})});if(!r.ok){console.log('HTTP',r.status);return [];}const j=await r.json();return j.results||[];}
+          let raw=[]; for(let off=0;off<6000;off+=200){const p=await page(off);raw=raw.concat(p);if(p.length<200)break;}
           const leads=raw.map(x=>x.lead||x.data||x);
-          // top-level keys union
-          const keys=new Set(); for(const l of leads.slice(0,500)) Object.keys(l).forEach(k=>keys.add(k));
-          const phoneKeys=[...keys].filter(k=>/phone|mobile|contact|whatsapp/i.test(k));
-          console.log('PHONE-like keys:', JSON.stringify(phoneKeys));
-          const prodKeys=[...keys].filter(k=>/product|deal|payment|order|sale|invoice|txn/i.test(k));
-          console.log('PRODUCT/DEAL-like keys:', JSON.stringify(prodKeys));
-          // how many leads have non-empty products?
-          let withProd=0, sampleProd=null, withPhone=0, samplePhoneKey=null;
-          for(const l of leads){
-            const pr=l.products||l.custom_products||l.custom_product_profile;
-            if(Array.isArray(pr)&&pr.length){withProd++; if(!sampleProd)sampleProd=pr[0];}
-            for(const pk of phoneKeys){ if(l[pk]){withPhone++; if(!samplePhoneKey)samplePhoneKey=pk; break;} }
-          }
-          console.log('leads total:', leads.length, '| with products:', withProd, '| with phone:', withPhone, '| phoneKey:', samplePhoneKey);
-          console.log('sample product obj keys:', sampleProd?JSON.stringify(Object.keys(sampleProd)):'none');
-          console.log('sample product obj:', sampleProd?JSON.stringify(sampleProd).slice(0,400):'none');
+          const acqOf=l=>Array.isArray(l.custom_acquisition_profile)?l.custom_acquisition_profile[0]:l.custom_acquisition_profile;
+          const us={}; for(const l of leads){const a=acqOf(l)||{}; const u=((a.utm_source==null?'(none)':a.utm_source)+'').trim()||'(blank)'; us[u]=(us[u]||0)+1;}
+          console.log('utm_source distribution:'); for(const [k,n] of Object.entries(us).sort((a,b)=>b[1]-a[1])) console.log('  ['+k+'] = '+n);
+          // for source==Goodflip leads, what utm_source?
+          const gf={}; let gfN=0; for(const l of leads){ if(((l.source||'')+'').trim().toLowerCase()==='goodflip'){ gfN++; const a=acqOf(l)||{}; const u=((a.utm_source==null?'(none)':a.utm_source)+'').trim()||'(blank)'; gf[u]=(gf[u]||0)+1; } }
+          console.log('Goodflip-source leads ('+gfN+') -> their utm_source:'); for(const [k,n] of Object.entries(gf).sort((a,b)=>b[1]-a[1])) console.log('  ['+k+'] = '+n);
+          // for blank-source leads -> utm_source
+          const bl={}; let blN=0; for(const l of leads){ if(((l.source||'')+'').trim()===''){ blN++; const a=acqOf(l)||{}; const u=((a.utm_source==null?'(none)':a.utm_source)+'').trim()||'(blank)'; bl[u]=(bl[u]||0)+1; } }
+          console.log('blank-source leads ('+blN+') -> their utm_source:'); for(const [k,n] of Object.entries(bl).sort((a,b)=>b[1]-a[1])) console.log('  ['+k+'] = '+n);
           EOF
           node p.mjs | tee -a "$GITHUB_STEP_SUMMARY"
