@@ -6,23 +6,33 @@ jobs:
     steps:
       - name: disc
         env:
-          K: ${{ secrets.PARTNER_API_KEY }}
-          S: ${{ secrets.PARTNER_API_SECRET }}
+          REVURL: ${{ secrets.PROGRAM_REVENUE_XLSX_URL }}
         run: |
+          npm i xlsx --no-audit --no-fund >/dev/null 2>&1
           cat > p.mjs <<'EOF'
-          const K=process.env.K||'', S=process.env.S||''; const auth='token '+K+':'+S;
-          const B='https'+'://'+'one.tatvacare.in'+'/api/method/tatva_connect.api.partner.';
-          async function page(off){const r=await fetch(B+'lead_get_bulk',{method:'POST',headers:{Authorization:auth,'Content-Type':'application/json'},body:JSON.stringify({created_after:'2026-09-20 00:00:00',created_before:'2026-10-12 00:00:00',limit:200,offset:off})});if(!r.ok){console.log('HTTP',r.status);return [];}const j=await r.json();return j.results||[];}
-          let raw=[]; for(let off=0;off<6000;off+=200){const p=await page(off);raw=raw.concat(p);if(p.length<200)break;}
-          const leads=raw.map(x=>x.lead||x.data||x);
-          const acqOf=l=>Array.isArray(l.custom_acquisition_profile)?l.custom_acquisition_profile[0]:l.custom_acquisition_profile;
-          const us={}; for(const l of leads){const a=acqOf(l)||{}; const u=((a.utm_source==null?'(none)':a.utm_source)+'').trim()||'(blank)'; us[u]=(us[u]||0)+1;}
-          console.log('utm_source distribution:'); for(const [k,n] of Object.entries(us).sort((a,b)=>b[1]-a[1])) console.log('  ['+k+'] = '+n);
-          // for source==Goodflip leads, what utm_source?
-          const gf={}; let gfN=0; for(const l of leads){ if(((l.source||'')+'').trim().toLowerCase()==='goodflip'){ gfN++; const a=acqOf(l)||{}; const u=((a.utm_source==null?'(none)':a.utm_source)+'').trim()||'(blank)'; gf[u]=(gf[u]||0)+1; } }
-          console.log('Goodflip-source leads ('+gfN+') -> their utm_source:'); for(const [k,n] of Object.entries(gf).sort((a,b)=>b[1]-a[1])) console.log('  ['+k+'] = '+n);
-          // for blank-source leads -> utm_source
-          const bl={}; let blN=0; for(const l of leads){ if(((l.source||'')+'').trim()===''){ blN++; const a=acqOf(l)||{}; const u=((a.utm_source==null?'(none)':a.utm_source)+'').trim()||'(blank)'; bl[u]=(bl[u]||0)+1; } }
-          console.log('blank-source leads ('+blN+') -> their utm_source:'); for(const [k,n] of Object.entries(bl).sort((a,b)=>b[1]-a[1])) console.log('  ['+k+'] = '+n);
+          const REV=process.env.REVURL||'';
+          const UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+          async function fetchSp(url){ const jar={};
+            async function hop(start){ let current=start, resp=null;
+              for(let i=0;i<14;i++){ const ck=Object.entries(jar).map(([k,val])=>k+'='+val).join('; ');
+                resp=await fetch(current,{redirect:'manual',cache:'no-store',headers:Object.assign({'User-Agent':UA,'Accept':'text/html,*/*;q=0.8'}, ck?{'Cookie':ck}:{})});
+                const sc=(typeof resp.headers.getSetCookie==='function')?resp.headers.getSetCookie():[];
+                for(const cc of sc){const seg=cc.split(';')[0];const jx=seg.indexOf('=');if(jx>0)jar[seg.slice(0,jx).trim()]=seg.slice(jx+1).trim();}
+                if(resp.status>=300&&resp.status<400){const loc=resp.headers.get('location');if(!loc)return resp;current=new URL(loc,current).toString();continue;}
+                return resp; } return resp; }
+            await hop(url); return await hop(url); }
+          const XLSX=await import('xlsx');
+          const u=REV + (REV.includes('?')?'&':'?') + 'nocache='+Date.now();
+          const r=await fetchSp(u);
+          console.log('HTTP', r.status, 'ct', (r.headers.get('content-type')||'').slice(0,40));
+          const buf=Buffer.from(await r.arrayBuffer());
+          const wb=XLSX.read(buf,{cellDates:false});
+          console.log('tabs:', wb.SheetNames.join(' | '));
+          let shown=0;
+          for(const nm of wb.SheetNames){ if(!(''+nm).toLowerCase().startsWith('gf'))continue;
+            const rows=XLSX.utils.sheet_to_json(wb.Sheets[nm],{header:1,raw:true,defval:null}); if(!rows.length)continue;
+            console.log('TAB ['+nm+'] headers:');
+            (rows[0]||[]).forEach((h,ix)=>{ if(h!=null&&(''+h).trim()!=='') console.log('   '+ix+': '+h); });
+            shown++; if(shown>=2)break; }
           EOF
           node p.mjs | tee -a "$GITHUB_STEP_SUMMARY"
