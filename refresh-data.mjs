@@ -864,7 +864,9 @@ async function getPartnerLeads(){
   }
   let raw=[]; for(let off=0; off<40000; off+=200){ const p=await pageAt(off); raw=raw.concat(p); if(p.length<200)break; }
   const leads=raw.map(x=>x.lead||x.data||x);
-  const mqlDaily={}, leadsDaily={}, therapyDaily={}, sourceDaily={}, cityDaily={}, ageDaily={};
+  const _norm=s=>{const dd=((s==null?'':''+s)).replace(/\D/g,'');return dd.length>=10?dd.slice(-10):'';};
+  const phoneMap={}; for(const l of leads){ const ph=_norm(l.mobile_no); if(!ph)continue; const _s=((l.source||'')+'').trim(); phoneMap[ph]={src:(_s===''?'TATA 1MG':_s), co:String(l.creation||'').slice(0,10)}; }
+  const mqlDaily={}, leadsDaily={}, therapyDaily={}, sourceDaily={}, cityDaily={}, ageDaily={}, convDaily={};
   for(const l of leads){
     const co=String(l.creation||'').slice(0,10); if(!co||co<since||co>until)continue;
     const _src=(l.source||'').toString().trim().toLowerCase(); if(_src!=='' && !SRC_OK.has(_src)) continue;
@@ -880,16 +882,31 @@ async function getPartnerLeads(){
     (mqlDaily[co]=mqlDaily[co]||{}); (mqlDaily[co][prog]=mqlDaily[co][prog]||{t:0,pa:0,fl:0,rv:0});
     const c=mqlDaily[co][prog]; c.t++; c[st]++; if(st==='pa'){const cty=((l.custom_city||sv(sa,'city')||'(blank)')+'').trim()||'(blank)'; const ag=((sv(sa,'age_group')||'(blank)')+'').trim()||'(blank)'; (cityDaily[co]=cityDaily[co]||{}); cityDaily[co][cty]=(cityDaily[co][cty]||0)+1; (ageDaily[co]=ageDaily[co]||{}); ageDaily[co][ag]=(ageDaily[co][ag]||0)+1;}
   }
-  return { partnerMqlDaily:mqlDaily, partnerLeadsDaily:leadsDaily, partnerTherapyDaily:therapyDaily,
+  try {
+    const XLSX=await import('xlsx');
+    const revUrl=PROGRAM_REV_URL + (PROGRAM_REV_URL.includes('?')?'&':'?') + 'nocache='+Date.now();
+    const rr=await fetchSp(revUrl);
+    if(rr && rr.ok){
+      const buf=Buffer.from(await rr.arrayBuffer());
+      const wb=XLSX.read(buf,{cellDates:false}); const seen=new Set();
+      for(const nm of wb.SheetNames){ if(!(''+nm).trim().toLowerCase().startsWith('gf'))continue;
+        const rows=XLSX.utils.sheet_to_json(wb.Sheets[nm],{header:1,raw:true,defval:null}); if(!rows.length)continue;
+        const hdr=rows[0].map(h=>(h==null?'':(''+h).trim())); const ci=hdr.indexOf('Contact Number'); if(ci<0)continue;
+        for(let i=1;i<rows.length;i++){ const row=rows[i]; if(!row)continue; const ph=_norm(row[ci]); if(!ph||seen.has(ph))continue; const hit=phoneMap[ph]; if(!hit)continue; const cco=hit.co; if(!cco||cco<since||cco>until)continue; seen.add(ph); (convDaily[cco]=convDaily[cco]||{}); convDaily[cco][hit.src]=(convDaily[cco][hit.src]||0)+1; }
+      }
+      console.log('[partner conv] buyers matched: '+seen.size);
+    }
+  } catch(e){ console.log('[partner conv] skipped: '+e.message); }
+  return { partnerMqlDaily:mqlDaily, partnerLeadsDaily:leadsDaily, partnerTherapyDaily:therapyDaily, partnerSourceConvDaily:convDaily,
     partnerSourceDaily:sourceDaily, partnerMqlCityDaily:cityDaily, partnerMqlAgeDaily:ageDaily, info:{ pulled:leads.length, window:{since,until} } };
 }
-for(const _k of ['partnerMqlDaily','partnerLeadsDaily','partnerTherapyDaily','partnerSourceDaily','partnerMqlCityDaily','partnerMqlAgeDaily']) out[_k]=out[_k]||prev[_k]||{};
+for(const _k of ['partnerMqlDaily','partnerLeadsDaily','partnerTherapyDaily','partnerSourceDaily','partnerMqlCityDaily','partnerMqlAgeDaily','partnerSourceConvDaily']) out[_k]=out[_k]||prev[_k]||{};
 if(!LIGHT) await run('partnerLeads', getPartnerLeads, r=>{
-  for(const k of ['partnerMqlDaily','partnerLeadsDaily','partnerTherapyDaily','partnerSourceDaily','partnerMqlCityDaily','partnerMqlAgeDaily']){
+  for(const k of ['partnerMqlDaily','partnerLeadsDaily','partnerTherapyDaily','partnerSourceDaily','partnerMqlCityDaily','partnerMqlAgeDaily','partnerSourceConvDaily']){
     out[k]=Object.assign(out[k]||prev[k]||{}, r[k]); }
   out.meta.partner=r.info;
   const cut=daysAgo(400);
-  for(const key of ['partnerMqlDaily','partnerLeadsDaily','partnerTherapyDaily','partnerSourceDaily','partnerMqlCityDaily','partnerMqlAgeDaily'])
+  for(const key of ['partnerMqlDaily','partnerLeadsDaily','partnerTherapyDaily','partnerSourceDaily','partnerMqlCityDaily','partnerMqlAgeDaily','partnerSourceConvDaily'])
     for(const d of Object.keys(out[key]||{})) if(d<cut) delete out[key][d];
 });
 
@@ -926,7 +943,7 @@ try {
 try {
   const KV_URL = process.env.KV_REST_API_URL, KV_TOKEN = process.env.KV_REST_API_TOKEN;
   if (KV_URL && KV_TOKEN) {
-    const SLIM = ['meta','dailyCreatives','mqlDaily','lsqAllDaily','lsqStageDaily','lsqSourceDaily','glpYesDaily','mqlCityDaily','mqlAgeDaily','programSalesDaily','programRevenueDaily','counsellorSalesDaily','counsellorLeadsDaily','creativeCustDaily','lsqSourceConvDaily','phoneSrc','partnerMqlDaily','partnerLeadsDaily','partnerTherapyDaily','partnerSourceDaily','partnerMqlCityDaily','partnerMqlAgeDaily'];
+    const SLIM = ['meta','dailyCreatives','mqlDaily','lsqAllDaily','lsqStageDaily','lsqSourceDaily','glpYesDaily','mqlCityDaily','mqlAgeDaily','programSalesDaily','programRevenueDaily','counsellorSalesDaily','counsellorLeadsDaily','creativeCustDaily','lsqSourceConvDaily','phoneSrc','partnerMqlDaily','partnerLeadsDaily','partnerTherapyDaily','partnerSourceDaily','partnerMqlCityDaily','partnerMqlAgeDaily','partnerSourceConvDaily'];
     const slim = {}; for (const k of SLIM) slim[k] = out[k];
     const payload = JSON.stringify(slim);
     const r = await fetch(`${KV_URL}/set/${encodeURIComponent('goodflip:feed')}`, {
