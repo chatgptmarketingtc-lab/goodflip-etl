@@ -867,9 +867,9 @@ async function getPartnerLeads(){
   const mqlDaily={}, leadsDaily={}, therapyDaily={}, sourceDaily={}, cityDaily={}, ageDaily={};
   for(const l of leads){
     const co=String(l.creation||'').slice(0,10); if(!co||co<since||co>until)continue;
-    const _src=(l.source||'').toString().trim().toLowerCase(); if(!SRC_OK.has(_src)) continue;
+    const _src=(l.source||'').toString().trim().toLowerCase(); if(_src!=='' && !SRC_OK.has(_src)) continue;
     leadsDaily[co]=(leadsDaily[co]||0)+1;
-    const src=(l.source||'(blank)').toString().trim()||'(blank)';
+    const src=(_src===''?'TATA 1MG':(l.source||'').toString().trim());
     (sourceDaily[co]=sourceDaily[co]||{}); sourceDaily[co][src]=(sourceDaily[co][src]||0)+1;
     const acq=Array.isArray(l.custom_acquisition_profile)?l.custom_acquisition_profile[0]:l.custom_acquisition_profile;
     const prog=getProg(acq&&acq.utm_disease); if(!prog)continue;
