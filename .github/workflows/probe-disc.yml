@@ -10,33 +10,25 @@ jobs:
           S: ${{ secrets.PARTNER_API_SECRET }}
         run: |
           cat > p.mjs <<'PEOF'
-          
           const K=process.env.K||'', S=process.env.S||''; const auth='token '+K+':'+S;
           const B='https'+'://'+'one.tatvacare.in'+'/api/method/tatva_connect.api.partner.';
-          async function page(off){const r=await fetch(B+'lead_get_bulk',{method:'POST',headers:{Authorization:auth,'Content-Type':'application/json'},body:JSON.stringify({created_after:'2026-08-25 00:00:00',created_before:'2026-10-13 00:00:00',limit:200,offset:off})});if(!r.ok){console.log('HTTP',r.status);return [];}const j=await r.json();return j.results||[];}
+          async function page(off){const r=await fetch(B+'lead_get_bulk',{method:'POST',headers:{Authorization:auth,'Content-Type':'application/json'},body:JSON.stringify({created_after:'2026-10-05 00:00:00',created_before:'2026-10-14 00:00:00',limit:200,offset:off})});if(!r.ok){console.log('HTTP',r.status);return [];}const j=await r.json();return j.results||[];}
           let raw=[]; for(let off=0;off<60000;off+=200){const p=await page(off);raw=raw.concat(p);if(p.length<200)break;}
           const FB=raw.map(x=>x.lead||x.data||x).filter(l=>((l.source||'')+'').trim()==='FB Lead Ads');
-          const CITIES=['mumbai','bombay','navi mumbai','thane','vasai','kalyan','dombivli','dahisar','panvel','delhi','najafgarh','dwarka','rohini','gurugram','gurgaon','noida','ghaziabad','indirapuram','faridabad','bengaluru','bangalore','banglore','bangaluru','bengalore','hyderabad','secunderabad','chennai','madras','pune','pimpri','pcmc','kolkata','calcutta','howrah','madhyamgram','barrackpore','ahmedabad','gandhinagar','lucknow','chandigarh','mohali','panchkula','jaipur','indore','kochi','cochin','ernakulam','nagpur','bhubaneswar','meerut'];
-          const ED=s=>((s==null?'':''+s)).replace(/–/g,'-');
-          const acqOf=l=>Array.isArray(l.custom_acquisition_profile)?l.custom_acquisition_profile[0]:l.custom_acquisition_profile;
+          const ED=s=>((s==null?'':''+s)).replace(/\u2013/g,'-');
           const formId=l=>{const m=((l.custom_source_origin||'')+'').match(/(\d{6,})/);return m?m[1]:'';};
-          const FORM={'2171554570323502':'GLP','2090088925195100':'Diabetes','2128093497914327':'Diabetes','2139550823270457':'Obesity','1633229261518119':'Obesity'};
-          function getProg(l){const a=acqOf(l)||{};let d=ED(a.utm_disease).toLowerCase().trim();if(d){if(d.includes('pre'))return null;if(d.includes('glp'))return'GLP';if(d.includes('diab'))return'Diabetes';if(d.includes('obes')||d.includes('weight'))return'Obesity';return null;}const c=ED(a.utm_campaign).toLowerCase();if(c){if(c.includes('glp'))return'GLP';if(c.includes('diab'))return'Diabetes';if(c.includes('obes'))return'Obesity';}return FORM[formId(l)]||null;}
           const sv=(sa,sub)=>{const q=(sa||[]).find(x=>((x.question||'')+'').toLowerCase().includes(sub));return q?ED(q.value):'';};
           const svAge=sa=>{const q=(sa||[]).find(x=>{const t=((x.question||'')+'').toLowerCase();return t.includes('age')&&!t.includes('average')&&!t.includes('manage')&&!t.includes('hba1c')&&!t.includes('package');});return q?ED(q.value):'';};
-          function cityStat(c){c=ED(c).toLowerCase().trim();if(!c)return null;for(const q of CITIES){if(c.includes(q))return true;}return false;}
-          function ageFail(prog,age){let a=ED(age).toLowerCase().trim();if(!a)return true;if(a.includes('60+')||a.includes('61-65')||a.includes('65+'))return true;if(a.includes('<30'))return true;if(a.includes('under')||a.includes('18-24')||a.includes('18-29')||a.includes('<25'))return true;if(prog==='Diabetes'&&a.includes('25-30'))return true;return false;}
-          function payFail(p){p=ED(p).toLowerCase().trim();if(!p)return true;if(p.includes('not_at_this_time'))return true;if(p.startsWith('no'))return true;if(p.includes('yes')||p.includes('maybe'))return false;return true;}
-          function bmiVal(l){const cb=ED(l.custom_bmi).trim();if(cb&&cb!=='0')return cb;const sa=l.custom_screening_answers||[];const b=sv(sa,'bmi');if(b)return b;return sv(sa,'weight');}
-          function bmiFail(l){let b=ED(bmiVal(l)).toLowerCase().trim();if(!b)return true;if(/^\d+(\.\d+)?$/.test(b))return parseFloat(b)>=25?false:true;if(b.includes('obese')||b.includes('25-29')||b.includes('30-34')||b.includes('35'))return false;return true;}
-          const OB=FB.filter(l=>getProg(l)==='Obesity'&&(''+(l.creation||'')).slice(0,10)>='2026-09-01'&&(''+(l.creation||'')).slice(0,10)<='2026-10-11');
-          const miss={};const hit={};
-          for(const l of OB){const sa=l.custom_screening_answers||[];if(bmiFail(l))continue;const a=svAge(sa);if(ageFail('Obesity',a))continue;if(payFail(sv(sa,'invest')||sv(sa,'paid_program')))continue;
-            const cityRaw=((l.custom_city||sv(sa,'city'))+'').trim();const cs=cityStat(cityRaw);
-            if(cs===true){hit[cityRaw.toLowerCase()]=(hit[cityRaw.toLowerCase()]||0)+1;}else{miss[cityRaw||'(blank)']=(miss[cityRaw||'(blank)']||0)+1;}}
-          console.log('Obesity Sep1-Oct11, BMI-ok & age-ok & pay-ok:');
-          console.log(' CITY MATCH (pass):'); for(const [k,n] of Object.entries(hit).sort((a,b)=>b[1]-a[1])) console.log('   '+n+'  ['+k+']');
-          console.log(' CITY NO-MATCH (would be MQL if city qualified):'); for(const [k,n] of Object.entries(miss).sort((a,b)=>b[1]-a[1]).slice(0,40)) console.log('   '+n+'  ['+k+']');
-          
+          const NEW='2128093497914327';
+          const D=FB.filter(l=>formId(l)===NEW && (''+(l.creation||'')).slice(0,10)>='2026-10-08' && (''+(l.creation||'')).slice(0,10)<='2026-10-13');
+          console.log('=== New Diabetes form '+NEW+' Oct8-13: '+D.length+' FB leads ===');
+          const qset={};
+          for(const l of D){for(const a of (l.custom_screening_answers||[])){const q=((a.question||'')+'').trim();const v=((a.value||'')+'').trim();qset[q]=qset[q]||{n:0,filled:0,sample:''};qset[q].n++;if(v){qset[q].filled++;if(!qset[q].sample)qset[q].sample=v;}}}
+          console.log('-- Distinct screening questions [filled/total] (sample value) --');
+          for(const [q,o] of Object.entries(qset)) console.log('  ['+o.filled+'/'+o.n+']  Q='+JSON.stringify(q)+'  e.g. '+JSON.stringify(o.sample));
+          let rAge=0,rHba=0,rPay=0,rCitySA=0,rCityCustom=0;
+          for(const l of D){const sa=l.custom_screening_answers||[];if(svAge(sa))rAge++;if(sv(sa,'hba1c'))rHba++;if(sv(sa,'invest')||sv(sa,'paid_program'))rPay++;if(sv(sa,'city'))rCitySA++;if(((l.custom_city||'')+'').trim())rCityCustom++;}
+          console.log('-- Scorer resolves (non-blank) of '+D.length+' --');
+          console.log('  age(svAge)='+rAge+'  hba1c(sv hba1c)='+rHba+'  payment(sv invest/paid_program)='+rPay+'  city(sv city)='+rCitySA+'  custom_city field='+rCityCustom);
           PEOF
           node p.mjs | tee -a "$GITHUB_STEP_SUMMARY"
