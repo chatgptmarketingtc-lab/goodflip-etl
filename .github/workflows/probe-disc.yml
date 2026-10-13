@@ -6,33 +6,63 @@ jobs:
     steps:
       - name: disc
         env:
-          REVURL: ${{ secrets.PROGRAM_REVENUE_XLSX_URL }}
+          K: ${{ secrets.PARTNER_API_KEY }}
+          S: ${{ secrets.PARTNER_API_SECRET }}
         run: |
-          npm i xlsx --no-audit --no-fund >/dev/null 2>&1
-          cat > p.mjs <<'EOF'
-          const REV=process.env.REVURL||'';
-          const UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
-          async function fetchSp(url){ const jar={};
-            async function hop(start){ let current=start, resp=null;
-              for(let i=0;i<14;i++){ const ck=Object.entries(jar).map(([k,val])=>k+'='+val).join('; ');
-                resp=await fetch(current,{redirect:'manual',cache:'no-store',headers:Object.assign({'User-Agent':UA,'Accept':'text/html,*/*;q=0.8'}, ck?{'Cookie':ck}:{})});
-                const sc=(typeof resp.headers.getSetCookie==='function')?resp.headers.getSetCookie():[];
-                for(const cc of sc){const seg=cc.split(';')[0];const jx=seg.indexOf('=');if(jx>0)jar[seg.slice(0,jx).trim()]=seg.slice(jx+1).trim();}
-                if(resp.status>=300&&resp.status<400){const loc=resp.headers.get('location');if(!loc)return resp;current=new URL(loc,current).toString();continue;}
-                return resp; } return resp; }
-            await hop(url); return await hop(url); }
-          const XLSX=await import('xlsx');
-          const u=REV + (REV.includes('?')?'&':'?') + 'nocache='+Date.now();
-          const r=await fetchSp(u);
-          console.log('HTTP', r.status, 'ct', (r.headers.get('content-type')||'').slice(0,40));
-          const buf=Buffer.from(await r.arrayBuffer());
-          const wb=XLSX.read(buf,{cellDates:false});
-          console.log('tabs:', wb.SheetNames.join(' | '));
-          let shown=0;
-          for(const nm of wb.SheetNames){ if(!(''+nm).toLowerCase().startsWith('gf'))continue;
-            const rows=XLSX.utils.sheet_to_json(wb.Sheets[nm],{header:1,raw:true,defval:null}); if(!rows.length)continue;
-            console.log('TAB ['+nm+'] headers:');
-            (rows[0]||[]).forEach((h,ix)=>{ if(h!=null&&(''+h).trim()!=='') console.log('   '+ix+': '+h); });
-            shown++; if(shown>=2)break; }
-          EOF
+          cat > p.mjs <<'PEOF'
+          
+          const K=process.env.K||'', S=process.env.S||''; const auth='token '+K+':'+S;
+          const B='https'+'://'+'one.tatvacare.in'+'/api/method/tatva_connect.api.partner.';
+          async function page(off){const r=await fetch(B+'lead_get_bulk',{method:'POST',headers:{Authorization:auth,'Content-Type':'application/json'},body:JSON.stringify({created_after:'2026-08-15 00:00:00',created_before:'2026-10-13 00:00:00',limit:200,offset:off})});if(!r.ok){console.log('HTTP',r.status);return [];}const j=await r.json();return j.results||[];}
+          let raw=[]; for(let off=0;off<60000;off+=200){const p=await page(off);raw=raw.concat(p);if(p.length<200)break;}
+          let leads=raw.map(x=>x.lead||x.data||x);
+          const FB=leads.filter(l=>((l.source||'')+'').trim()==='FB Lead Ads');
+          console.log('raw',leads.length,'FB',FB.length);
+          const CITIES=['mumbai','bombay','navi mumbai','thane','vasai','kalyan','dombivli','dahisar','panvel','delhi','najafgarh','dwarka','rohini','gurugram','gurgaon','noida','ghaziabad','indirapuram','faridabad','bengaluru','bangalore','banglore','bangaluru','bengalore','hyderabad','secunderabad','chennai','madras','pune','pimpri','pcmc','kolkata','calcutta','howrah','madhyamgram','barrackpore','ahmedabad','gandhinagar','lucknow','chandigarh','mohali','panchkula','jaipur','indore','kochi','cochin','ernakulam','nagpur','bhubaneswar','meerut'];
+          const ED=s=>((s==null?'':''+s)).replace(/–/g,'-');
+          const acqOf=l=>Array.isArray(l.custom_acquisition_profile)?l.custom_acquisition_profile[0]:l.custom_acquisition_profile;
+          const formId=l=>{const m=((l.custom_source_origin||'')+'').match(/(\d{6,})/);return m?m[1]:'';};
+          const FORM={'2171554570323502':'GLP','2090088925195100':'Diabetes','2128093497914327':'Diabetes','2139550823270457':'Obesity','1633229261518119':'Obesity'};
+          function getProg(l){const a=acqOf(l)||{};let d=ED(a.utm_disease).toLowerCase().trim();
+            if(d){if(d.includes('pre'))return null;if(d.includes('glp'))return'GLP';if(d.includes('diab'))return'Diabetes';if(d.includes('obes')||d.includes('weight'))return'Obesity';if(d.includes('pcos'))return null;return null;}
+            const c=ED(a.utm_campaign).toLowerCase();if(c){if(c.includes('glp'))return'GLP';if(c.includes('diab'))return'Diabetes';if(c.includes('obes'))return'Obesity';}
+            return FORM[formId(l)]||null;}
+          const sv=(sa,sub)=>{const q=(sa||[]).find(x=>((x.question||'')+'').toLowerCase().includes(sub));return q?ED(q.value):'';};
+          function cityStat(c){c=ED(c).toLowerCase().trim();if(!c)return null;for(const q of CITIES){if(c.includes(q))return true;}return false;}
+          function ageFail(prog,age){let a=ED(age).toLowerCase().trim();if(!a)return true;
+            if(a.includes('60+')||a.includes('61-65')||a.includes('65+'))return true;
+            if(a.includes('<30'))return true;
+            if(a.includes('under')||a.includes('18-24')||a.includes('18-29')||a.includes('<25')||a.includes('under_25'))return true;
+            if(prog==='Diabetes'&&a.includes('25-30'))return true;
+            return false;}
+          function payFail(p){p=ED(p).toLowerCase().trim();if(!p)return true;if(p.includes('not_at_this_time')||p.includes('not at this time'))return true;if(p.startsWith('no'))return true;if(p.includes('yes')||p.includes('maybe'))return false;return true;}
+          function hbaFail(h){h=ED(h).toLowerCase().trim();if(!h)return true;if(h.includes('don'))return true;if(h.includes('normal'))return true;if(h.includes('below_5.7')||h.includes('below 5.7')||h.includes('<5.7'))return true;return false;}
+          function bmiVal(l){const cb=ED(l.custom_bmi).trim();if(cb&&cb!=='0')return cb;const sa=l.custom_screening_answers||[];const b=sv(sa,'bmi');if(b)return b;return sv(sa,'weight');}
+          function bmiFail(l){let b=ED(bmiVal(l)).toLowerCase().trim();if(!b)return true;if(/^\d+(\.\d+)?$/.test(b))return parseFloat(b)>=25?false:true;if(b.includes('obese')||b.includes('25-29')||b.includes('30-34')||b.includes('35'))return false;return true;}
+          function score(l,prog){const sa=l.custom_screening_answers||[];const age=sv(sa,'age');const city=l.custom_city||sv(sa,'city');const pay=sv(sa,'invest')||sv(sa,'open_to_investing')||sv(sa,'paid_program');
+            let fail=false;const cs=cityStat(city);
+            if(ageFail(prog,age))fail=true; if(cs===false)fail=true; if(payFail(pay))fail=true;
+            if(prog==='Diabetes'&&hbaFail(sv(sa,'hba1c')))fail=true;
+            if(prog==='Obesity'&&bmiFail(l))fail=true;
+            if(fail)return'FAIL'; if(cs===null)return'REVIEW'; return'PASS';}
+          function win(s,e){const agg={Diabetes:[0,0],Obesity:[0,0],GLP:[0,0]};for(const l of FB){const co=(''+(l.creation||'')).slice(0,10);if(co<s||co>e)continue;const p=getProg(l);if(!p||!agg[p])continue;agg[p][0]++;if(score(l,p)==='PASS')agg[p][1]++;}
+            let tl=0,tm=0;for(const k of['Diabetes','Obesity','GLP']){tl+=agg[k][0];tm+=agg[k][1];console.log('  '+k+': '+agg[k][0]+' -> '+agg[k][1]);}console.log('  TOTAL: '+tl+' -> '+tm);}
+          console.log('\n=== Oct 1-11 (accept D413/61 O315/14 GLP1754/940 T2482/1015) ==='); win('2026-10-01','2026-10-11');
+          console.log('\n=== Oct 9-11 (accept D191/14 O127/5 GLP481/244 T799/263) ==='); win('2026-10-09','2026-10-11');
+          console.log('\n=== Sep 1-30 (accept D1199/459 O651/31 GLP3984/2275 T5834/2765) ==='); win('2026-09-01','2026-09-30');
+          // Bug2 diagnostic: blank utm_disease FB leads reclassified
+          let blankUtm=0,viaCamp=0,viaForm=0,unclass=0;for(const l of FB){const a=acqOf(l)||{};if(ED(a.utm_disease).trim()==='')  {blankUtm++;const c=ED(a.utm_campaign).toLowerCase();if(c.includes('glp')||c.includes('diab')||c.includes('obes'))viaCamp++;else if(FORM[formId(l)])viaForm++;else unclass++;}}
+          console.log('\nBlank-UTM FB leads:'+blankUtm+' | via campaign:'+viaCamp+' | via form:'+viaForm+' | unclassified:'+unclass);
+          // Bug3 diagnostic: new diabetes form 2128093497914327 Oct8-12 question keys + blank rates
+          const nf=FB.filter(l=>formId(l)==='2128093497914327'&&(''+(l.creation||'')).slice(0,10)>='2026-10-08');
+          console.log('\nNew Diabetes form 2128... Oct8+ leads:'+nf.length);
+          const qk={};for(const l of nf){for(const q of (l.custom_screening_answers||[])){const k=((q.question||'')+'').toLowerCase();qk[k]=(qk[k]||0)+1;}}
+          console.log(' question keys present:'); for(const [k,n] of Object.entries(qk).sort((a,b)=>b[1]-a[1])) console.log('   ['+k+'] x'+n);
+          let pb=0,cb=0,ab=0,hb=0;for(const l of nf){const sa=l.custom_screening_answers||[];if(!(sv(sa,'invest')||sv(sa,'open_to_investing')||sv(sa,'paid_program')))pb++;if(!(l.custom_city||sv(sa,'city')))cb++;if(!sv(sa,'age'))ab++;if(!sv(sa,'hba1c'))hb++;}
+          console.log(' blanks -> payment:'+pb+' city:'+cb+' age:'+ab+' hba1c:'+hb+' (of '+nf.length+')');
+          // Bug3b: obesity new form 1633229261518119 city samples
+          const of=FB.filter(l=>formId(l)==='1633229261518119');console.log('\nObesity new form 1633... leads:'+of.length+' sample cities:');
+          console.log('   '+of.slice(0,15).map(l=>JSON.stringify(l.custom_city||sv(l.custom_screening_answers||[],'city'))).join(', '));
+          
+          PEOF
           node p.mjs | tee -a "$GITHUB_STEP_SUMMARY"
