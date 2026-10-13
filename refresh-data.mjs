@@ -769,7 +769,7 @@ if(!LIGHT) try{
   console.log('[spend-backfill] filled '+filled+' historical day(s)');
 }catch(e){ console.log('[spend-backfill] skipped: '+e.message); }
 await run('frappeLeads', getFrappeLeads, r=>{ for(const k of ['lsqAllDaily','lsqStageDaily','lsqSourceDaily','counsellorLeadsDaily']){ if(r[k]) Object.assign(out[k]=out[k]||{}, r[k]); } out.meta.leadsPulled=r.pulled; out.meta.leadSource='frappe'; });
-  await run('insightsMQL', getInsightsMQL, r=>{ out.mqlDaily=r.mqlDaily; out.mqlCityDaily=r.mqlCityDaily; out.mqlAgeDaily=r.mqlAgeDaily; out.meta.insightsScored=r.scored; out.meta.insightsPulled=r.pulled; });
+  // insightsMQL DISABLED 2026-10-13 (Frappe Insights QueryTimeout; unused by scorecard) — call removed so it no longer fires
 await run('shopify', getShopify, r=>{ out.shopifyDaily=r.shopifyDaily; out.meta.shopifyOrders=r.orders; });
 if(!LIGHT) await run('gokwik', getGokwik, r=>{
   // MERGE by date (not replace): each daily report updates the days it carries and
