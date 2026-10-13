@@ -823,33 +823,24 @@ async function getPartnerLeads(){
   if(!K || !S) throw new Error('PARTNER_API_KEY / PARTNER_API_SECRET missing');
   const BASE = 'https'+'://'+'one.tatvacare.in'+'/api/method/tatva_connect.api.partner.lead_get_bulk';
   const auth = 'token '+K+':'+S;
-  const CQ = ['mumbai','bombay','navi mumbai','thane','vasai','kalyan','dombivli','dahisar','panvel','delhi','new delhi','najafgarh','dwarka','rohini','gurugram','gurgaon','noida','greater noida','ghaziabad','gaziabad','indirapuram','faridabad','bengaluru','bangalore','banglore','bangaluru','bengalore','hyderabad','secunderabad','chennai','madras','pune','pimpri-chinchwad','pcmc','kolkata','calcutta','howrah','madhyamgram','barrackpore','ahmedabad','gandhinagar','lucknow','chandigarh','mohali','panchkula','jaipur','indore','kochi','cochin','ernakulam','nagpur','bhubaneswar','meerut'];
-  const getProg = d => { d=String(d||'').toLowerCase();
-    if(d.includes('pre-diab')||d.includes('pre_diab'))return 'Pre-Diabetes';
-    if(d.includes('glp'))return 'GLP-1';
-    if(d.includes('diab'))return 'Diabetes';
-    if(d.includes('obesit')||d.includes('weight'))return 'Obesity';
-    if(d.includes('pcos'))return 'PCOS'; return null; };
-  const cityQ = c => { if(!c||!String(c).trim())return null; c=String(c).toLowerCase();
-    for(const q of CQ){ if(q&&(c.includes(q)||q.includes(c)))return true; } return false; };
-  const diabAge = a => { a=String(a||'').toLowerCase();
-    if(a.includes('under'))return true; if(a.includes('25')&&a.includes('30'))return true;
-    if(a.includes('60+')||a.includes('61-65')||a.includes('65+'))return true; return false; };
-  const yo = a => { a=String(a||'').toLowerCase();
-    return a.includes('under')||a.includes('60+')||a.includes('61-65')||a.includes('65+'); };
-  const payBad = p => { p=String(p||'').toLowerCase().trim();
-    return p===''||p.includes('not_at_this_time')||p.includes('not at this time')||p.startsWith('no,')||p.startsWith('no '); };
-  const hbaFail = h => { h=String(h||'').toLowerCase().trim();
-    return h===''||h.includes('don')||h.includes('unknown')||h.includes('below_5.7')||h.includes('below 5.7')||h.includes('normal')||h.includes('below7.5'); };
-  const bmiOk = b => String(b||'').toLowerCase().includes('obese');
-  function pscore(prog,age,city,hba1c,pay,bmi){ if(!prog)return null; let f=0; const cq=cityQ(city);
-    if(prog==='Diabetes'){ if(diabAge(age))f++; if(cq===false)f++; if(hbaFail(hba1c))f++; if(payBad(pay))f++; }
-    else if(prog==='Obesity'){ if(yo(age))f++; if(cq===false)f++; if(!bmiOk(bmi))f++; if(payBad(pay))f++; }
-    else if(prog==='GLP-1'){ if(yo(age))f++; if(cq===false)f++; if(payBad(pay))f++; }
-    else if(prog==='Pre-Diabetes'){ if(String(age||'').includes('60+'))f++; if(cq===false)f++; if(payBad(pay))f++; }
-    else if(prog==='PCOS'){ if(cq===false)f++; if(payBad(pay))f++; }
-    if(f)return 'fl'; if(cq===null)return 'rv'; return 'pa'; }
-  const sv=(sa,sub)=>{ const q=(sa||[]).find(x=>String(x.question||'').toLowerCase().includes(sub)); return q?q.value:''; };
+  const CQ = ['mumbai','bombay','navi mumbai','thane','vasai','kalyan','dombivli','dahisar','panvel','delhi','dehli','najafgarh','dwarka','rohini','gurugram','gurgaon','noida','ghaziabad','indirapuram','faridabad','bengaluru','bangalore','banglore','bangaluru','bengalore','hyderabad','secunderabad','chennai','madras','pune','pimpri','pcmc','kolkata','calcutta','howrah','madhyamgram','barrackpore','ahmedabad','gandhinagar','lucknow','chandigarh','mohali','panchkula','jaipur','indore','kochi','cochin','ernakulam','nagpur','bhubaneswar','meerut'];
+  const ED = s => ((s==null?'':''+s)).replace(/\u2013/g,'-');
+  const FORM = {'2171554570323502':'GLP-1','2090088925195100':'Diabetes','2128093497914327':'Diabetes','2139550823270457':'Obesity','1633229261518119':'Obesity'};
+  const formId = l => { const m=((l.custom_source_origin||'')+'').match(/(\d{6,})/); return m?m[1]:''; };
+  const getProg = l => { const a=(Array.isArray(l.custom_acquisition_profile)?l.custom_acquisition_profile[0]:l.custom_acquisition_profile)||{};
+    let d=ED(a.utm_disease).toLowerCase().trim();
+    if(d){ if(d.includes('pre'))return null; if(d.includes('glp'))return 'GLP-1'; if(d.includes('diab'))return 'Diabetes'; if(d.includes('obes')||d.includes('weight'))return 'Obesity'; return null; }
+    const c=ED(a.utm_campaign).toLowerCase(); if(c){ if(c.includes('glp'))return 'GLP-1'; if(c.includes('diab'))return 'Diabetes'; if(c.includes('obes'))return 'Obesity'; }
+    return FORM[formId(l)]||null; };
+  const cityStat = c => { c=ED(c).toLowerCase().trim(); if(!c)return null; for(const q of CQ){ if(c.includes(q))return true; } return false; };
+  const sv=(sa,sub)=>{ const q=(sa||[]).find(x=>String(x.question||'').toLowerCase().includes(sub)); return q?ED(q.value):''; };
+  const svAge=sa=>{ const q=(sa||[]).find(x=>{const t=String(x.question||'').toLowerCase();return t.includes('age')&&!t.includes('average')&&!t.includes('manage')&&!t.includes('hba1c')&&!t.includes('package');}); return q?ED(q.value):''; };
+  const ageFail = (prog,age) => { let a=ED(age).toLowerCase().trim(); if(!a)return true; if(a.includes('60+')||a.includes('61-65')||a.includes('65+'))return true; if(a.includes('<30'))return true; if(a.includes('under')||a.includes('18-24')||a.includes('18-29')||a.includes('<25'))return true; if(prog==='Diabetes'&&a.includes('25-30'))return true; return false; };
+  const payFail = p => { p=ED(p).toLowerCase().trim(); if(!p)return true; if(p.includes('not_at_this_time')||p.includes('not at this time'))return true; if(p.startsWith('no'))return true; if(p.includes('yes')||p.includes('maybe'))return false; return true; };
+  const hbaFail = h => { h=ED(h).toLowerCase().trim(); if(!h)return true; if(h.includes('don'))return true; if(h.includes('normal'))return true; if(h.includes('below_5.7')||h.includes('below 5.7')||h.includes('<5.7'))return true; return false; };
+  const bmiVal = l => { const cb=ED(l.custom_bmi).trim(); if(cb&&cb!=='0')return cb; const sa=l.custom_screening_answers||[]; const b=sv(sa,'bmi'); if(b)return b; return sv(sa,'weight'); };
+  const bmiFail = l => { let b=ED(bmiVal(l)).toLowerCase().trim(); if(!b)return true; if(/^\d+(\.\d+)?$/.test(b))return parseFloat(b)>=25?false:true; if(b.includes('obese')||b.includes('25-29')||b.includes('30-34')||b.includes('35'))return false; return true; };
+  function pscore(l,prog){ const sa=l.custom_screening_answers||[]; const cs=cityStat(l.custom_city||sv(sa,'city')); let fail=false; if(ageFail(prog,svAge(sa)))fail=true; if(cs===false)fail=true; if(payFail(sv(sa,'invest')||sv(sa,'paid_program')))fail=true; if(prog==='Diabetes'&&hbaFail(sv(sa,'hba1c')))fail=true; if(prog==='Obesity'&&bmiFail(l))fail=true; if(fail)return 'fl'; if(cs===null)return 'rv'; return 'pa'; }
   const SRC_OK=new Set(['fb lead ads','facebook','whatsapp marketing','whatsapp_reactivation','webpage lead','tata 1mg','tata1mg','glp landing page','instagram dm','instagram']);
   const since=daysAgo(PARTNER_DAYS), until=TODAY;
   async function pageAt(off){
@@ -873,14 +864,13 @@ async function getPartnerLeads(){
     leadsDaily[co]=(leadsDaily[co]||0)+1;
     const src=(_src===''?'TATA 1MG':(l.source||'').toString().trim());
     (sourceDaily[co]=sourceDaily[co]||{}); sourceDaily[co][src]=(sourceDaily[co][src]||0)+1;
-    const acq=Array.isArray(l.custom_acquisition_profile)?l.custom_acquisition_profile[0]:l.custom_acquisition_profile;
-    const prog=getProg(acq&&acq.utm_disease); if(!prog)continue;
+    if(_src!=='fb lead ads') continue;
+    const prog=getProg(l); if(!prog)continue;
     (therapyDaily[co]=therapyDaily[co]||{}); therapyDaily[co][prog]=(therapyDaily[co][prog]||0)+1;
     const sa=l.custom_screening_answers||[];
-    const st=pscore(prog, sv(sa,'age_group'), l.custom_city||sv(sa,'city'), sv(sa,'hba1c'),
-      sv(sa,'open_to_investing')||sv(sa,'investment_interest')||sv(sa,'program_interest'), sv(sa,'bmi'));
+    const st=pscore(l,prog);
     (mqlDaily[co]=mqlDaily[co]||{}); (mqlDaily[co][prog]=mqlDaily[co][prog]||{t:0,pa:0,fl:0,rv:0});
-    const c=mqlDaily[co][prog]; c.t++; c[st]++; if(st==='pa'){const cty=((l.custom_city||sv(sa,'city')||'(blank)')+'').trim()||'(blank)'; const ag=((sv(sa,'age_group')||'(blank)')+'').trim()||'(blank)'; (cityDaily[co]=cityDaily[co]||{}); cityDaily[co][cty]=(cityDaily[co][cty]||0)+1; (ageDaily[co]=ageDaily[co]||{}); ageDaily[co][ag]=(ageDaily[co][ag]||0)+1;}
+    const c=mqlDaily[co][prog]; c.t++; c[st]++; if(st==='pa'){const cty=((l.custom_city||sv(sa,'city')||'(blank)')+'').trim()||'(blank)'; const ag=((svAge(sa)||'(blank)')+'').trim()||'(blank)'; (cityDaily[co]=cityDaily[co]||{}); cityDaily[co][cty]=(cityDaily[co][cty]||0)+1; (ageDaily[co]=ageDaily[co]||{}); ageDaily[co][ag]=(ageDaily[co][ag]||0)+1;}
   }
   try {
     const XLSX=await import('xlsx');
