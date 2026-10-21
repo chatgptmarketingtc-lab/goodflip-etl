@@ -1,0 +1,29 @@
+name: probe3probe3: Meta spend Oct 1-21 by campaign, classified vs excluded vs unclassified
+on: [push]
+jobs:
+  dsc:
+    runs-on: ubuntu-latest
+    steps:
+      - name: spend
+        env:
+          MT: ${{ secrets.META_ACCESS_TOKEN }}
+        run: |
+          cat > p.mjs <<'PEOF'
+          const TOK=process.env.MT||''; const V='v23.0';
+          const ACC=['267120132089369','1673404820349968','988407777596025','1649611303396289'];
+          const since='2026-10-01', until='2026-10-21';
+          const EXCLUDE=['tatva practice','tatvapractice','bihar abdm','lookalike dr data'];
+          function classify(c){ const lc=(c||'').toLowerCase(); if(EXCLUDE.some(p=>lc.includes(p)))return 'EXCLUDED'; let t=''; if(lc.includes('pre-diabetes')||lc.includes('prediabetes'))t='Pre-Diabetes'; else if(lc.includes('diabetes'))t='Diabetes'; else if(lc.includes('obesity')||lc.includes('weight'))t='Obesity'; else if(lc.includes('glp'))t='GLP-1'; else if(lc.includes('cgm'))t='CGM'; else if(lc.includes('bca'))t='BCA'; else if(lc.includes('pcos'))t='PCOS'; if(!t)return 'UNCLASSIFIED'; return 'classified'; }
+          async function acc(id){ let url='https://graph.facebook.com/'+V+'/act_'+id+'/insights?level=campaign&fields=campaign_name,spend&time_range='+encodeURIComponent(JSON.stringify({since,until}))+'&limit=500&access_token='+TOK; const rows=[]; let p=0; while(url&&p<40){ const r=await fetch(url); if(!r.ok){ console.log('HTTP',id,r.status,(await r.text()).slice(0,100)); break; } const j=await r.json(); for(const row of j.data||[])rows.push(row); url=j.paging&&j.paging.next?j.paging.next:null; p++; } return rows; }
+          let grand=0,cl=0,ex=0,un=0; const exL={},unL={},perAcc={};
+          for(const id of ACC){ const rows=await acc(id); let at=0; for(const row of rows){ const s=parseFloat(row.spend)||0; at+=s; grand+=s; const b=classify(row.campaign_name); if(b==='EXCLUDED'){ex+=s; exL[row.campaign_name]=(exL[row.campaign_name]||0)+s;} else if(b==='UNCLASSIFIED'){un+=s; unL[row.campaign_name]=(unL[row.campaign_name]||0)+s;} else cl+=s; } perAcc[id]=Math.round(at); }
+          console.log('=== Meta spend Oct 1-21 (4 accounts) ===');
+          console.log('Per account:', JSON.stringify(perAcc));
+          console.log('GRAND TOTAL (all campaigns):', Math.round(grand));
+          console.log('CLASSIFIED (dashboard counts):', Math.round(cl));
+          console.log('EXCLUDED total:', Math.round(ex));
+          console.log('UNCLASSIFIED total:', Math.round(un));
+          console.log('-- EXCLUDED campaigns --'); for(const [k,v] of Object.entries(exL).sort((a,b)=>b[1]-a[1])) console.log('  '+Math.round(v)+'  '+k);
+          console.log('-- UNCLASSIFIED campaigns (dropped, not excluded) --'); for(const [k,v] of Object.entries(unL).sort((a,b)=>b[1]-a[1])) console.log('  '+Math.round(v)+'  '+k);
+          PEOF
+          node p.mjs | tee -a "$GITHUB_STEP_SUMMARY"
