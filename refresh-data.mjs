@@ -857,9 +857,10 @@ async function getPartnerLeads(){
   const leads=raw.map(x=>x.lead||x.data||x);
   const _norm=s=>{const dd=((s==null?'':''+s)).replace(/\D/g,'');return dd.length>=10?dd.slice(-10):'';};
   const phoneMap={}; for(const l of leads){ const ph=_norm(l.mobile_no); if(!ph)continue; const _s=((l.source||'')+'').trim(); phoneMap[ph]={src:(_s===''?'TATA 1MG':_s), co:String(l.creation||'').slice(0,10)}; }
-  const mqlDaily={}, leadsDaily={}, therapyDaily={}, sourceDaily={}, cityDaily={}, ageDaily={}, convDaily={};
+  const mqlDaily={}, leadsDaily={}, therapyDaily={}, sourceDaily={}, cityDaily={}, ageDaily={}, convDaily={}, partnerCounsellorDaily={};
   for(const l of leads){
     const co=String(l.creation||'').slice(0,10); if(!co||co<since||co>until)continue;
+    const _cn=canonCounsellor(l.lead_owner); if(_cn){(partnerCounsellorDaily[co]=partnerCounsellorDaily[co]||{}); partnerCounsellorDaily[co][_cn]=(partnerCounsellorDaily[co][_cn]||0)+1;}
     const _src=(l.source||'').toString().trim().toLowerCase(); if(_src!=='' && !SRC_OK.has(_src)) continue;
     leadsDaily[co]=(leadsDaily[co]||0)+1;
     const src=(_src===''?'TATA 1MG':(l.source||'').toString().trim());
@@ -887,16 +888,16 @@ async function getPartnerLeads(){
       console.log('[partner conv] buyers matched: '+seen.size);
     }
   } catch(e){ console.log('[partner conv] skipped: '+e.message); }
-  return { partnerMqlDaily:mqlDaily, partnerLeadsDaily:leadsDaily, partnerTherapyDaily:therapyDaily, partnerSourceConvDaily:convDaily,
+  return { partnerCounsellorLeadsDaily: partnerCounsellorDaily, partnerMqlDaily:mqlDaily, partnerLeadsDaily:leadsDaily, partnerTherapyDaily:therapyDaily, partnerSourceConvDaily:convDaily,
     partnerSourceDaily:sourceDaily, partnerMqlCityDaily:cityDaily, partnerMqlAgeDaily:ageDaily, info:{ pulled:leads.length, window:{since,until} } };
 }
-for(const _k of ['partnerMqlDaily','partnerLeadsDaily','partnerTherapyDaily','partnerSourceDaily','partnerMqlCityDaily','partnerMqlAgeDaily','partnerSourceConvDaily']) out[_k]=out[_k]||prev[_k]||{};
+for(const _k of ['partnerMqlDaily','partnerLeadsDaily','partnerTherapyDaily','partnerSourceDaily','partnerMqlCityDaily','partnerMqlAgeDaily','partnerSourceConvDaily','partnerCounsellorLeadsDaily']) out[_k]=out[_k]||prev[_k]||{};
 if(!LIGHT) await run('partnerLeads', getPartnerLeads, r=>{
-  for(const k of ['partnerMqlDaily','partnerLeadsDaily','partnerTherapyDaily','partnerSourceDaily','partnerMqlCityDaily','partnerMqlAgeDaily','partnerSourceConvDaily']){
+  for(const k of ['partnerMqlDaily','partnerLeadsDaily','partnerTherapyDaily','partnerSourceDaily','partnerMqlCityDaily','partnerMqlAgeDaily','partnerSourceConvDaily','partnerCounsellorLeadsDaily']){
     out[k]=Object.assign(out[k]||prev[k]||{}, r[k]); }
   out.meta.partner=r.info;
   const cut=daysAgo(400);
-  for(const key of ['partnerMqlDaily','partnerLeadsDaily','partnerTherapyDaily','partnerSourceDaily','partnerMqlCityDaily','partnerMqlAgeDaily','partnerSourceConvDaily'])
+  for(const key of ['partnerMqlDaily','partnerLeadsDaily','partnerTherapyDaily','partnerSourceDaily','partnerMqlCityDaily','partnerMqlAgeDaily','partnerSourceConvDaily','partnerCounsellorLeadsDaily'])
     for(const d of Object.keys(out[key]||{})) if(d<cut) delete out[key][d];
 });
 
@@ -933,7 +934,7 @@ try {
 try {
   const KV_URL = process.env.KV_REST_API_URL, KV_TOKEN = process.env.KV_REST_API_TOKEN;
   if (KV_URL && KV_TOKEN) {
-    const SLIM = ['meta','dailyCreatives','mqlDaily','lsqAllDaily','lsqStageDaily','lsqSourceDaily','glpYesDaily','mqlCityDaily','mqlAgeDaily','programSalesDaily','programRevenueDaily','counsellorSalesDaily','counsellorLeadsDaily','creativeCustDaily','lsqSourceConvDaily','phoneSrc','partnerMqlDaily','partnerLeadsDaily','partnerTherapyDaily','partnerSourceDaily','partnerMqlCityDaily','partnerMqlAgeDaily','partnerSourceConvDaily'];
+    const SLIM = ['meta','dailyCreatives','mqlDaily','lsqAllDaily','lsqStageDaily','lsqSourceDaily','glpYesDaily','mqlCityDaily','mqlAgeDaily','programSalesDaily','programRevenueDaily','counsellorSalesDaily','counsellorLeadsDaily','creativeCustDaily','lsqSourceConvDaily','phoneSrc','partnerMqlDaily','partnerLeadsDaily','partnerTherapyDaily','partnerSourceDaily','partnerMqlCityDaily','partnerMqlAgeDaily','partnerSourceConvDaily','partnerCounsellorLeadsDaily'];
     const slim = {}; for (const k of SLIM) slim[k] = out[k];
     const payload = JSON.stringify(slim);
     const r = await fetch(`${KV_URL}/set/${encodeURIComponent('goodflip:feed')}`, {
