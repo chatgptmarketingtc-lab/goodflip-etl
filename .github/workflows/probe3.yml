@@ -10,17 +10,10 @@ jobs:
         run: |
           cat > p.mjs <<'PEOF'
           const TOK=process.env.MT||''; const V='v23.0';
-          const ACC=['267120132089369','1673404820349968','988407777596025','1649611303396289'];
           const since='2026-10-01', until='2026-10-21';
-          const EXCLUDE=['tatva practice','tatvapractice','bihar abdm','lookalike dr data'];
-          function classify(c){ const lc=(c||'').toLowerCase(); if(EXCLUDE.some(p=>lc.includes(p)))return 'EXCLUDED'; let t=''; if(lc.includes('pre-diabetes')||lc.includes('prediabetes'))t='Pre-Diabetes'; else if(lc.includes('diabetes'))t='Diabetes'; else if(lc.includes('obesity')||lc.includes('weight'))t='Obesity'; else if(lc.includes('glp'))t='GLP-1'; else if(lc.includes('cgm'))t='CGM'; else if(lc.includes('bca'))t='BCA'; else if(lc.includes('pcos'))t='PCOS'; if(!t)return 'UNCLASSIFIED'; return 'classified'; }
-          async function pull(id,level,fields){ let url='https://graph.facebook.com/'+V+'/act_'+id+'/insights?level='+level+'&fields='+fields+'&time_range='+encodeURIComponent(JSON.stringify({since,until}))+'&limit=500&access_token='+TOK; const rows=[]; let p=0; while(url&&p<60){ const r=await fetch(url); if(!r.ok){ console.log('HTTP',id,level,r.status,(await r.text()).slice(0,90)); break; } const j=await r.json(); for(const row of j.data||[])rows.push(row); url=j.paging&&j.paging.next?j.paging.next:null; p++; } return rows; }
-          for(const id of ACC){
-            const camps=await pull(id,'campaign','campaign_name,spend');
-            let cClass=0; for(const row of camps){ const s=parseFloat(row.spend)||0; if(classify(row.campaign_name)==='classified')cClass+=s; }
-            const ads=await pull(id,'ad','campaign_name,spend&time_increment=1');
-            let aClass=0; for(const row of ads){ const s=parseFloat(row.spend)||0; if(classify(row.campaign_name)==='classified')aClass+=s; }
-            console.log('ACC '+id+': campaign-level classified='+Math.round(cClass)+'  ad-level classified='+Math.round(aClass)+'  diff='+Math.round(cClass-aClass)+'  (ads rows='+ads.length+')');
-          }
+          async function pull(id){ let url='https://graph.facebook.com/'+V+'/act_'+id+'/insights?level=campaign&fields=campaign_name,spend&time_range='+encodeURIComponent(JSON.stringify({since,until}))+'&limit=500&access_token='+TOK; const rows=[]; let p=0; while(url&&p<30){ const r=await fetch(url); if(!r.ok){console.log('HTTP',r.status);break;} const j=await r.json(); for(const row of j.data||[])rows.push(row); url=j.paging&&j.paging.next?j.paging.next:null; p++; } return rows; }
+          const rows=await pull('1649611303396289');
+          console.log('=== ACC 1649611303396289 campaigns (Oct 1-21) ===');
+          for(const row of rows.sort((a,b)=>(parseFloat(b.spend)||0)-(parseFloat(a.spend)||0))) console.log('  '+Math.round(parseFloat(row.spend)||0)+'  '+row.campaign_name);
           PEOF
           node p.mjs | tee -a "$GITHUB_STEP_SUMMARY"
