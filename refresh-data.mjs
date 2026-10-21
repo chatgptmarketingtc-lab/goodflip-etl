@@ -789,7 +789,7 @@ async function getPartnerLeads(){
   const mqlDaily={}, leadsDaily={}, therapyDaily={}, sourceDaily={}, cityDaily={}, ageDaily={}, convDaily={}, partnerCounsellorDaily={};
   for(const l of leads){
     const co=String(l.creation||'').slice(0,10); if(!co||co<since||co>until)continue;
-    const _cn=canonCounsellor(l.lead_owner); if(_cn){(partnerCounsellorDaily[co]=partnerCounsellorDaily[co]||{}); partnerCounsellorDaily[co][_cn]=(partnerCounsellorDaily[co][_cn]||0)+1;}
+    const _cn=canonCounsellor(String(l.lead_owner||'').split('@')[0].replace(/[._]+/g,' ')); if(_cn){(partnerCounsellorDaily[co]=partnerCounsellorDaily[co]||{}); partnerCounsellorDaily[co][_cn]=(partnerCounsellorDaily[co][_cn]||0)+1;}
     const _src=(l.source||'').toString().trim().toLowerCase(); if(_src!=='' && !SRC_OK.has(_src)) continue;
     leadsDaily[co]=(leadsDaily[co]||0)+1;
     const src=(_src===''?'TATA 1MG':(l.source||'').toString().trim());
