@@ -1,4 +1,4 @@
-name: probe3probe3: Meta spend Oct 1-21 by campaign, classified vs excluded vs unclassified
+name: probe3
 on: [push]
 jobs:
   dsc:
