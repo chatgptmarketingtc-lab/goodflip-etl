@@ -244,36 +244,6 @@ function frappeLeadSource(source, origin){
 function frappeOwnerName(email){ if(!email) return null; const local=String(email).split('@')[0]; if(['administrator','guest','admin'].includes(local.toLowerCase())) return null; const nm=local.split(/[._-]+/).filter(Boolean).map(w=>w.charAt(0).toUpperCase()+w.slice(1)).join(' '); return canonCounsellor(nm); }
 function ymdPlus(ymd,n){ const p=String(ymd).split('-').map(Number); const t=new Date(Date.UTC(p[0],p[1]-1,p[2])); t.setUTCDate(t.getUTCDate()+n); return t.toISOString().slice(0,10); }
 // Page through a single calendar day [day .. day+1) and tally count / source / substage / owner.
-async function frappeDay(day){
-  const out={ count:0, src:{}, stage:{}, owner:{}, srcConv:{}, leads:[] };
-  const nd=ymdPlus(day,1); let offset=0;
-  for(let p=0;p<80;p++){
-    const qs=new URLSearchParams({ account:FRAPPE_ACCOUNT, limit:'200', offset:String(offset), created_after:day, created_before:nd });
-    await frappeGate(); const r=await fetch(FRAPPE_BASE+'/api/v8/frappe-partner/leads/list?'+qs.toString(), { headers:{ 'frappe-secret-key':FRAPPE_SECRET, 'isdecrypted':'1', 'Accept':'application/json' } });
-    if(!r.ok){ const t=await r.text().catch(()=> ''); throw new Error('Frappe '+r.status+' '+day+': '+t.slice(0,140)); }
-    const j=await r.json(); const m=(j&&j.data&&j.data.data)||{}; const leads=m.leads||[];
-    for(const L of leads){
-      out.count++; if(L.facebook_lead_id&&String(L.facebook_lead_id)!=='null'){out.leads.push({f:String(L.facebook_lead_id),m:normPhone(L.mobile_no),d:day,s:frappeLeadSource(L.source,L.custom_source_origin)});}
-      const s=frappeLeadSource(L.source, L.custom_source_origin); out.src[s]=(out.src[s]||0)+1;
-      const st=(L.custom_substage==null?'':String(L.custom_substage).split('::').pop().trim()); if(st){ out.stage[st]=(out.stage[st]||0)+1; if(st==='Converted'){ out.srcConv[s]=(out.srcConv[s]||0)+1; } }
-      const nm=canonCounsellor(frappeOwnerName(L.lead_owner)); if(nm){ out.owner[nm]=(out.owner[nm]||0)+1; }
-    }
-    if(!m.has_more || leads.length<200) break; offset+=200;
-  }
-  return out;
-}
-async function getFrappeLeads(){
-  if(!FRAPPE_SECRET) throw new Error('FRAPPE_SECRET_KEY missing');
-  const days = LIGHT ? 8 : 31;                 // light run refreshes recent days; full run the whole window
-  const until=TODAY, since=daysAgo(days);
-  const lsqAllDaily={}, lsqSourceDaily={}, lsqStageDaily={}, lsqSourceConvDaily={}, counsellorLeadsDaily={};
-  let pulled=0;
-  for(let d=since; d<=until; d=ymdPlus(d,1)){
-    let r=null; for(let a=0;a<3;a++){ try{ r=await frappeDay(d); break; }catch(e){ if(a<2) await _frappeSleep(20000); else console.log('[frappe] skipped '+d+': '+e.message); } } if(!r) continue;
-    if(r.count>0){ lsqAllDaily[d]=r.count; lsqSourceDaily[d]=r.src; lsqStageDaily[d]=r.stage; lsqSourceConvDaily[d]=r.srcConv; counsellorLeadsDaily[d]=r.owner; pulled+=r.count; if(r.leads&&r.leads.length){for(var _li=0;_li<r.leads.length;_li++)LEADS_RAW.push(r.leads[_li]);} }
-  }
-  return { lsqAllDaily, lsqSourceDaily, lsqStageDaily, lsqSourceConvDaily, counsellorLeadsDaily, mqlDaily:{}, glpYesDaily:{}, mqlCityDaily:{}, mqlAgeDaily:{}, pulled, window:{since,until} };
-}
 
 
 
@@ -696,47 +666,6 @@ const out={ dailyCreatives:prev.dailyCreatives||{}, creativeImages:{}, mqlDaily:
 if(!LIGHT) out.meta.lastFullRun = new Date().toISOString();
 
 const token=process.env.META_ACCESS_TOKEN;
-async function getConvByDate(){
-  if(!FRAPPE_SECRET) throw new Error('FRAPPE_SECRET_KEY missing');
-  const firstByPhone = {}, lcByPhone = {};
-  for(const sa of CONV_SALES){ if(!sa || !sa.ph || !sa.d) continue; if(!firstByPhone[sa.ph] || sa.d < firstByPhone[sa.ph]) firstByPhone[sa.ph] = sa.d; if(sa.lc && !lcByPhone[sa.ph]) lcByPhone[sa.ph] = sa.lc; }
-  const buyers = Object.keys(firstByPhone);
-  const pv = prev.phoneSrc || {};
-  const phoneSrc = {};
-  for(const ph of buyers){ if(pv[ph]) phoneSrc[ph] = pv[ph]; }
-  const need = new Set(buyers.filter(ph => !phoneSrc[ph]));
-  const addSrc = (ph, s) => { if(ph && s && need.has(ph)){ phoneSrc[ph] = s; need.delete(ph); } };
-  for(const L of LEADS_RAW){ if(L) addSrc(L.m, L.s); }
-  let scanned = 0, daysFetched = 0;
-  if(need.size){
-    const days = {};
-    need.forEach(ph => { const lc = lcByPhone[ph]; if(lc) days[lc] = 1; });
-    const dayList = Object.keys(days).sort();
-    const gap = Number(process.env.FRAPPE_CONV_GAP_MS || 1500); let last = 0;
-    const sleep = ms => new Promise(r=>setTimeout(r,ms));
-    const base = FRAPPE_BASE + '/api/' + 'v8/frappe-partner/' + 'leads/' + 'list';
-    const Q = String.fromCharCode(63);
-    const CA = 'created' + '_after', CB = 'created' + '_before';
-    const nextDay = ymd => { const p = String(ymd).split('-').map(Number); const t = new Date(Date.UTC(p[0], p[1]-1, p[2])); t.setUTCDate(t.getUTCDate()+1); return t.toISOString().slice(0,10); };
-    for(const day of dayList){
-      if(!need.size) break;
-      let offset = 0;
-      for(let p=0; p<25 && need.size; p++){
-        const w = last+gap-Date.now(); if(w>0) await sleep(w); last = Date.now();
-        const pp = { account:FRAPPE_ACCOUNT, limit:'200', offset:String(offset) }; pp[CA] = day; pp[CB] = nextDay(day);
-        const r = await fetch(base + Q + new URLSearchParams(pp).toString(), { headers:{ 'frappe-secret-key':FRAPPE_SECRET, 'isdecrypted':'1', 'Accept':'application/json' } });
-        if(!r.ok){ break; }
-        const j = await r.json(); const m = (j && j.data && j.data.data) || {}; const leads = m.leads || [];
-        for(const L of leads){ scanned++; addSrc(normPhone(L.mobile_no), frappeLeadSource(L.source, L.custom_source_origin)); }
-        if(!m.has_more || leads.length<200){ break; } offset += 200;
-      }
-      daysFetched++;
-    }
-  }
-  const conv = {}; let matched = 0, unmatched = 0;
-  for(const ph of buyers){ const src = phoneSrc[ph] || '(unmatched)'; if(phoneSrc[ph]) matched++; else unmatched++; const day = lcByPhone[ph]; if(!day) continue; (conv[day] = conv[day] || {}); conv[day][src] = (conv[day][src]||0) + 1; }
-  return { conv, phoneSrc, info:{ buyers:buyers.length, matched, unmatched, scanned, daysFetched, withLeadDate:Object.keys(lcByPhone).length, remaining:need.size } };
-}
 async function run(name, fn, apply){ try{ const r=await fn(); apply(r); out.meta.sources[name]='ok'; console.log('['+name+'] ok'); }catch(e){ out.meta.sources[name]='error: '+e.message; console.error('['+name+'] FAILED:', e.message); } }
 
 if(!LIGHT) await run('performance', ()=>{ if(!token)throw new Error('META_ACCESS_TOKEN missing'); return getPerformance(token); },
