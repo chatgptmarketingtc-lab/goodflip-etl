@@ -115,6 +115,19 @@ async function fetchAccountInsightsChunked(acct, token, since, until, chunkDays 
   return all;
 }
 
+async function fetchCampaignSpend(acct, token, since, until) {
+  const params = new URLSearchParams({ level: 'campaign', time_increment: '1', fields: 'campaign_name,spend', time_range: JSON.stringify({ since, until }), limit: '500', access_token: token });
+  let url = `https://graph.facebook.com/${GRAPH_VERSION}/act_${acct}/insights?` + params.toString();
+  const out = []; let pages = 0;
+  while (url && pages < 60) {
+    const r = await fetch(url);
+    if (!r.ok) { const t = await r.text(); throw new Error(`campaign insights ${r.status} act_${acct}: ${t.slice(0,160)}`); }
+    const j = await r.json();
+    for (const row of j.data || []) { const date = (row.date_start || '').trim(); const camp = (row.campaign_name || '').trim(); const spend = Math.round((parseFloat(row.spend) || 0) * 100) / 100; if (date && camp) out.push({ date, camp, spend }); }
+    url = j.paging && j.paging.next ? j.paging.next : null; pages++;
+  }
+  return out;
+}
 async function getPerformance(token) {
   const since = daysAgo(PERF_DAYS), until = TODAY;
   const dailyCreatives = {}; const accountStatus = {}; let any = false;
@@ -146,6 +159,28 @@ async function getPerformance(token) {
     accountStatus[s.a] = 'ok(' + s.rows.length + ' rows)'; any = true;
   }
   if (!any) throw new Error('All Meta accounts failed: ' + JSON.stringify(accountStatus));
+    // Spend completeness cross-check: the ad-level pull can return a thin slice for an account
+  // (empty 200, not an error), silently dropping a whole campaign's spend (seen: GLP | Campaign 1).
+  // Compare against campaign-level spend (one cheap call/account, no chunking) and backfill any
+  // per-day per-campaign shortfall as a spend-only entry so the SPENDS total always reconciles.
+  try {
+    const haveKey = {};
+    for (const d in dailyCreatives) for (const cr of dailyCreatives[d]) { if (cr.recon) continue; const k = d + '|' + (cr.c || ''); haveKey[k] = (haveKey[k] || 0) + (+cr.s || 0); }
+    let reconTotal = 0, reconN = 0;
+    for (const a of AD_ACCOUNTS) {
+      let campRows; try { campRows = await fetchCampaignSpend(a, token, since, until); } catch (e) { console.error('[perf] campaign-spend ' + a + ' failed:', e.message); continue; }
+      for (const row of campRows) {
+        const cls = classify(row.camp); if (!cls) continue;
+        const have = haveKey[row.date + '|' + row.camp] || 0;
+        const miss = Math.round((row.spend - have) * 100) / 100;
+        if (miss > 1) {
+          (dailyCreatives[row.date] = dailyCreatives[row.date] || []).push({ n: '(spend reconcile)', c: row.camp, as: '', t: cls.therapy, o: cls.objective, s: miss, i: 0, cl: 0, l: 0, p: 0, atc: 0, ci: 0, lpv: 0, recon: 1 });
+          reconTotal += miss; reconN++;
+        }
+      }
+    }
+    if (reconN) console.log('[perf] spend reconcile: added ' + reconN + ' entries, +Rs ' + Math.round(reconTotal));
+  } catch (e) { console.error('[perf] spend reconcile failed:', e.message); }
   Object.keys(dailyCreatives).forEach(d => dailyCreatives[d].sort((a, b) => b.s - a.s));
   return { dailyCreatives, accountStatus, window: { since, until } };
 }
