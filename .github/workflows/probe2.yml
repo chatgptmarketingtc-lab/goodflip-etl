@@ -1,0 +1,28 @@
+name: probe2
+on: [push]
+jobs:
+  dsc:
+    runs-on: ubuntu-latest
+    steps:
+      - name: disc
+        env:
+          K: ${{ secrets.PARTNER_API_KEY }}
+          S: ${{ secrets.PARTNER_API_SECRET }}
+        run: |
+          cat > p.mjs <<'PEOF'
+          const K=process.env.K||'', S=process.env.S||''; const auth='token '+K+':'+S;
+          const B='https'+'://'+'one.tatvacare.in'+'/api/method/tatva_connect.api.partner.';
+          async function page(off){const r=await fetch(B+'lead_get_bulk',{method:'POST',headers:{Authorization:auth,'Content-Type':'application/json'},body:JSON.stringify({created_after:'2026-10-14 00:00:00',created_before:'2026-10-22 00:00:00',limit:200,offset:off})});if(!r.ok){console.log('HTTP',r.status);return [];}const j=await r.json();return j.results||[];}
+          let raw=[]; for(let off=0;off<40000;off+=200){const p=await page(off);raw=raw.concat(p);if(p.length<200)break;}
+          const FB=raw.map(x=>x.lead||x.data||x).filter(l=>((l.source||'')+'').trim()==='FB Lead Ads');
+          console.log('=== lead_get_bulk FB leads (Oct14-22): '+FB.length+' ===');
+          const keyset={};
+          for(const l of FB){ for(const k in l){ keyset[k]=(keyset[k]||0)+1; } }
+          console.log('-- ALL top-level key names --');
+          console.log('  '+Object.keys(keyset).sort().join(', '));
+          const re=/owner|counsel|assign|agent|sales|\brep\b|caller|telecaller|cre\b|advisor|coach/i;
+          const ownerKeys=Object.keys(keyset).filter(k=>re.test(k));
+          console.log('-- OWNER-ISH keys: '+JSON.stringify(ownerKeys)+' --');
+          for(const k of ownerKeys){ let filled=0; const samp={}; for(const l of FB){ let v=l[k]; if(v!=null && (''+v).trim()!==''){ filled++; const sv=(typeof v==='object'?JSON.stringify(v):(''+v)).slice(0,50); samp[sv]=(samp[sv]||0)+1; } } console.log('  ['+filled+'/'+FB.length+'] '+k); const top=Object.entries(samp).sort((a,b)=>b[1]-a[1]).slice(0,10); for(const [sv,n] of top) console.log('       '+n+'  '+JSON.stringify(sv)); }
+          PEOF
+          node p.mjs | tee -a "$GITHUB_STEP_SUMMARY"
