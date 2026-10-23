@@ -1,0 +1,28 @@
+name: probe3
+on: [push]
+jobs:
+  dsc:
+    runs-on: ubuntu-latest
+    steps:
+      - name: spend
+        env:
+          MT: ${{ secrets.META_ACCESS_TOKEN }}
+        run: |
+          cat > p.mjs <<'PEOF'
+          const TOK=process.env.MT||''; const V='v23.0';
+          const ACC={'267120132089369':'TatvaCare','1673404820349968':'GLP_1673','988407777596025':'Acct_988','1649611303396289':'Acct_1649'};
+          const since='2026-10-01', until='2026-10-22';
+          const EXCLUDE=['tatva practice','tatvapractice','bihar abdm','lookalike dr data'];
+          function cls(c){ const lc=(c||'').toLowerCase(); if(EXCLUDE.some(p=>lc.includes(p)))return 'EXCLUDED'; let t=''; if(lc.includes('diabetes'))t='x'; else if(lc.includes('obesity')||lc.includes('weight'))t='x'; else if(lc.includes('glp'))t='x'; else if(lc.includes('cgm'))t='x'; else if(lc.includes('bca'))t='x'; else if(lc.includes('pcos'))t='x'; if(!t)return 'UNCLASSIFIED'; return 'classified'; }
+          async function pull(id){ let url='https://graph.facebook.com/'+V+'/act_'+id+'/insights?level=campaign&fields=campaign_name,spend&time_range='+encodeURIComponent(JSON.stringify({since,until}))+'&limit=500&access_token='+TOK; const rows=[]; let p=0; while(url&&p<30){ const r=await fetch(url); if(!r.ok){console.log('HTTP',id,r.status);break;} const j=await r.json(); for(const row of j.data||[])rows.push(row); url=j.paging&&j.paging.next?j.paging.next:null; p++; } return rows; }
+          let grand=0,classified=0,excl=0,uncl=0; const perAcc={}; const exBy={};
+          for(const id in ACC){ const rows=await pull(id); let a=0,ac=0; for(const row of rows){ const s=parseFloat(row.spend)||0; a+=s; grand+=s; const b=cls(row.campaign_name); if(b==='EXCLUDED'){excl+=s; exBy[row.campaign_name]=(exBy[row.campaign_name]||0)+s;} else if(b==='UNCLASSIFIED')uncl+=s; else {classified+=s; ac+=s;} } perAcc[ACC[id]]=Math.round(a)+' (classified '+Math.round(ac)+')'; }
+          console.log('=== Meta spend Oct 1-22 ===');
+          console.log('Per account (total | classified):'); for(const k in perAcc) console.log('  '+k+': '+perAcc[k]);
+          console.log('GRAND TOTAL all campaigns: '+Math.round(grand));
+          console.log('CLASSIFIED (dashboard Meta): '+Math.round(classified));
+          console.log('EXCLUDED TatvaPractice/etc: '+Math.round(excl));
+          console.log('UNCLASSIFIED: '+Math.round(uncl));
+          console.log('-- excluded campaigns --'); for(const [k,v] of Object.entries(exBy).sort((a,b)=>b[1]-a[1])) console.log('  '+Math.round(v)+'  '+k);
+          PEOF
+          node p.mjs | tee -a "$GITHUB_STEP_SUMMARY"
