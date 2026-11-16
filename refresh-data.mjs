@@ -785,7 +785,7 @@ out.meta.perfWindow = Object.assign({ since: daysAgo(PERF_DAYS) }, out.meta.perf
 // frappeLeads / insightsMQL / convByDate sources are left untouched as fallback until
 // the dashboards are cut over. Reconciled to the LSQ export (Oct 1-7: 723 vs 716 MQL,
 // <1%). Counts only -> no PII in the feed. Gated to full runs (heavier paged pull).
-const PARTNER_DAYS = 80;
+const PARTNER_DAYS = 120;
 async function getPartnerLeads(){
   const K = process.env.PARTNER_API_KEY || '', S = process.env.PARTNER_API_SECRET || '';
   if(!K || !S) throw new Error('PARTNER_API_KEY / PARTNER_API_SECRET missing');
@@ -821,7 +821,7 @@ async function getPartnerLeads(){
     }
     throw new Error('partner retries exhausted at offset '+off);
   }
-  let raw=[]; for(let off=0; off<40000; off+=200){ const p=await pageAt(off); raw=raw.concat(p); if(p.length<200)break; }
+  let raw=[]; for(let off=0; off<80000; off+=200){ const p=await pageAt(off); raw=raw.concat(p); if(p.length<200)break; }
   const leads=raw.map(x=>x.lead||x.data||x);
   const _norm=s=>{const dd=((s==null?'':''+s)).replace(/\D/g,'');return dd.length>=10?dd.slice(-10):'';};
   const phoneMap={}; for(const l of leads){ const ph=_norm(l.mobile_no); if(!ph)continue; const _s=((l.source||'')+'').trim(); phoneMap[ph]={src:partnerLeadSource(l.source, l.custom_source_origin), co:String(l.creation||'').slice(0,10)}; }
