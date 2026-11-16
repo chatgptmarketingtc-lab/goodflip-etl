@@ -274,6 +274,10 @@ function frappeLeadSource(source, origin){
   if(s && s.toLowerCase()!=='partner api' && s.toLowerCase()!=='goodflip') return frappeSource(s);   // trust corrected source; 'partner api' & 'goodflip' are ambiguous tags -> use origin
   return frappeOriginBucket(origin) || (s ? frappeSource(s) : '(no source)'); // fall back to origin for the mislabeled batch
 }
+// Partner-feed attribution: Tata 1mg wins on source OR custom_source_origin; else frappeLeadSource (blank+blank -> '(no source)').
+function partnerLeadSource(source, origin){ const sl=((source==null?'':''+source)).toLowerCase(); const ol=((origin==null?'':''+origin)).toLowerCase(); if(sl.includes('1mg')||ol.includes('1mg')) return 'TATA 1MG'; return frappeLeadSource(source, origin); }
+// Canonical channels that roll up into the headline "Total Leads". Others (Goodflip, Partner API, phones, (no source), insurance, webinars) show greyed and sum only under "All leads".
+function isCountedChannel(src){ const s=((src==null?'':''+src)).toLowerCase().trim(); return s==='fb lead ads'||s==='tata 1mg'||s==='whatsapp marketing'||s==='webpage lead'||s==='glp landing page'||s==='instagram'||s==='instagram dm'||s==='whatsapp_reactivation'; }
 // lead_owner is an email (e.g. shaqib.ahmad@...). Derive "First Last" and reconcile via canonCounsellor
 // so lead owners match the revenue-sheet counsellor names on the leaderboard.
 function frappeOwnerName(email){ if(!email) return null; const local=String(email).split('@')[0]; if(['administrator','guest','admin'].includes(local.toLowerCase())) return null; const nm=local.split(/[._-]+/).filter(Boolean).map(w=>w.charAt(0).toUpperCase()+w.slice(1)).join(' '); return canonCounsellor(nm); }
@@ -820,15 +824,15 @@ async function getPartnerLeads(){
   let raw=[]; for(let off=0; off<40000; off+=200){ const p=await pageAt(off); raw=raw.concat(p); if(p.length<200)break; }
   const leads=raw.map(x=>x.lead||x.data||x);
   const _norm=s=>{const dd=((s==null?'':''+s)).replace(/\D/g,'');return dd.length>=10?dd.slice(-10):'';};
-  const phoneMap={}; for(const l of leads){ const ph=_norm(l.mobile_no); if(!ph)continue; const _s=((l.source||'')+'').trim(); phoneMap[ph]={src:(_s===''?'TATA 1MG':_s), co:String(l.creation||'').slice(0,10)}; }
+  const phoneMap={}; for(const l of leads){ const ph=_norm(l.mobile_no); if(!ph)continue; const _s=((l.source||'')+'').trim(); phoneMap[ph]={src:partnerLeadSource(l.source, l.custom_source_origin), co:String(l.creation||'').slice(0,10)}; }
   const mqlDaily={}, leadsDaily={}, therapyDaily={}, sourceDaily={}, cityDaily={}, ageDaily={}, convDaily={}, partnerCounsellorDaily={};
   for(const l of leads){
     const co=String(l.creation||'').slice(0,10); if(!co||co<since||co>until)continue;
     const _cn=canonCounsellor(String(l.lead_owner||'').split('@')[0].replace(/[._]+/g,' ')); if(_cn){(partnerCounsellorDaily[co]=partnerCounsellorDaily[co]||{}); partnerCounsellorDaily[co][_cn]=(partnerCounsellorDaily[co][_cn]||0)+1;}
-    const _src=(l.source||'').toString().trim().toLowerCase(); if(_src!=='' && !SRC_OK.has(_src)) continue;
-    leadsDaily[co]=(leadsDaily[co]||0)+1;
-    const src=(_src===''?'TATA 1MG':(l.source||'').toString().trim());
+    const _src=(l.source||'').toString().trim().toLowerCase();
+    const src=partnerLeadSource(l.source, l.custom_source_origin);
     (sourceDaily[co]=sourceDaily[co]||{}); sourceDaily[co][src]=(sourceDaily[co][src]||0)+1;
+    if(isCountedChannel(src)) leadsDaily[co]=(leadsDaily[co]||0)+1;
     if(_src!=='fb lead ads') continue;
     const prog=getProg(l); if(!prog)continue;
     (therapyDaily[co]=therapyDaily[co]||{}); therapyDaily[co][prog]=(therapyDaily[co][prog]||0)+1;
