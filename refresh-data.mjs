@@ -785,7 +785,7 @@ out.meta.perfWindow = Object.assign({ since: daysAgo(PERF_DAYS) }, out.meta.perf
 // frappeLeads / insightsMQL / convByDate sources are left untouched as fallback until
 // the dashboards are cut over. Reconciled to the LSQ export (Oct 1-7: 723 vs 716 MQL,
 // <1%). Counts only -> no PII in the feed. Gated to full runs (heavier paged pull).
-const PARTNER_DAYS = 120;
+const PARTNER_DAYS = 80;
 async function getPartnerLeads(){
   const K = process.env.PARTNER_API_KEY || '', S = process.env.PARTNER_API_SECRET || '';
   if(!K || !S) throw new Error('PARTNER_API_KEY / PARTNER_API_SECRET missing');
